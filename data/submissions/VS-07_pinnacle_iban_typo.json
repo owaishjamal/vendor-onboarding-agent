@@ -1,0 +1,64 @@
+{
+  "legal_name": "Pinnacle Design Studio Ltd",
+  "country": "GB",
+  "entity_type": "Private limited company",
+  "registration_number": "11238904",
+  "tax_id": "GB331920477",
+  "address_line1": "Second Floor, 88 Rivington Street",
+  "address_city": "London",
+  "address_postcode": "EC2A 3AY",
+  "address_country": "GB",
+  "contact_name": "Elena Marsh",
+  "contact_email": "elena@pinnacledesign.studio",
+  "website": "https://pinnacledesign.studio",
+  "directors": [
+    "Elena Marsh",
+    "Tom Alderton"
+  ],
+  "bank": {
+    "account_name": "Pinnacle Design Studio Ltd",
+    "iban": "GB29NWBK60611331926819",
+    "swift_bic": "NWBKGB2L",
+    "bank_name": "NatWest",
+    "bank_country": "GB"
+  },
+  "documents": [
+    {
+      "doc_type": "incorporation",
+      "filename": "coi_pinnacle.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "certificate_of_incorporation",
+        "legal_name": "Pinnacle Design Studio Ltd",
+        "company_number": "11238904",
+        "issue_date": "2025-06-30"
+      },
+      "path": "VS-07/coi_pinnacle.pdf"
+    },
+    {
+      "doc_type": "tax_form",
+      "filename": "vat_pinnacle.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "vat_certificate",
+        "legal_name": "Pinnacle Design Studio Ltd",
+        "vat_number": "GB331920477",
+        "issue_date": "2025-07-14"
+      },
+      "path": "VS-07/vat_pinnacle.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "bank_letter_pinnacle.png",
+      "readable": true,
+      "extracted": {
+        "kind": "bank_letter",
+        "account_name": "Pinnacle Design Studio Ltd",
+        "issue_date": "2026-05-22"
+      },
+      "path": "VS-07/bank_letter_pinnacle.png"
+    }
+  ],
+  "payment_terms": "Net 14",
+  "submission_id": "VS-07"
+}

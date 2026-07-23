@@ -1,0 +1,65 @@
+{
+  "legal_name": "Meridian Rail Components LLC",
+  "trading_name": "Meridian Rail",
+  "country": "US",
+  "entity_type": "LLC",
+  "registration_number": "C9017722",
+  "tax_id": "58-2019447",
+  "address_line1": "870 Industrial Parkway",
+  "address_city": "Cleveland, OH",
+  "address_postcode": "44114",
+  "address_country": "US",
+  "contact_name": "Grace Halloran",
+  "contact_email": "grace.halloran@meridianrail.com",
+  "website": "https://meridianrail.com",
+  "directors": [
+    "Grace Halloran",
+    "Sergei Antonov"
+  ],
+  "director_details": [
+    {
+      "name": "Grace Halloran",
+      "dob": "1979-04-17",
+      "nationality": "US"
+    },
+    {
+      "name": "Sergei Antonov",
+      "dob": "1990-09-25",
+      "nationality": "US"
+    }
+  ],
+  "bank": {
+    "account_name": "Meridian Rail Components LLC",
+    "account_number": "550120933",
+    "routing_number": "041000030",
+    "bank_name": "Great Lakes Bank",
+    "bank_country": "US"
+  },
+  "documents": [
+    {
+      "doc_type": "tax_form",
+      "filename": "w9_meridian.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "w9",
+        "legal_name": "Meridian Rail Components LLC",
+        "ein": "58-2019447",
+        "issue_date": "2026-03-05"
+      },
+      "path": "VS-08/w9_meridian.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "bank_letter_meridian.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "bank_letter",
+        "account_name": "Meridian Rail Components LLC",
+        "issue_date": "2026-05-28"
+      },
+      "path": "VS-08/bank_letter_meridian.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-08"
+}

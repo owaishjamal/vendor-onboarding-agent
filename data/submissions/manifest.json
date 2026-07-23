@@ -1,0 +1,90 @@
+[
+  {
+    "file": "VS-01_northwind_clean.json",
+    "submission_id": "VS-01",
+    "legal_name": "Northwind Components Inc",
+    "country": "US",
+    "scenario": "Complete, internally consistent, documents corroborate the form.",
+    "expected_status": "APPROVED"
+  },
+  {
+    "file": "VS-02_brightline_incomplete.json",
+    "submission_id": "VS-02",
+    "legal_name": "Brightline Analytics Ltd",
+    "country": "GB",
+    "scenario": "Missing VAT number and missing bank proof document. Vendor-fixable.",
+    "expected_status": "PENDING_INFO"
+  },
+  {
+    "file": "VS-03_kessler_bank_mismatch.json",
+    "submission_id": "VS-03",
+    "legal_name": "Kessler Industrietechnik GmbH",
+    "country": "DE",
+    "scenario": "All fields individually valid; bank account holder is not the company.",
+    "expected_status": "PENDING_REVIEW"
+  },
+  {
+    "file": "VS-04_sundara_country_mismatch.json",
+    "submission_id": "VS-04",
+    "legal_name": "Sundara Textiles Private Limited",
+    "country": "IN",
+    "scenario": "Claims Indian registration but supplies a UK VAT number.",
+    "expected_status": "PENDING_REVIEW"
+  },
+  {
+    "file": "VS-05_continental_shared_account.json",
+    "submission_id": "VS-05",
+    "legal_name": "Continental Freight Services LLC",
+    "country": "US",
+    "scenario": "Clean submission, but the bank account belongs to another vendor.",
+    "expected_status": "PENDING_REVIEW"
+  },
+  {
+    "file": "VS-06_volkov_denied_party.json",
+    "submission_id": "VS-06",
+    "legal_name": "Volkov Maritime Trading Pte Ltd",
+    "country": "SG",
+    "scenario": "Director appears on a denied-party list. Terminal.",
+    "expected_status": "REJECTED"
+  },
+  {
+    "file": "VS-07_pinnacle_iban_typo.json",
+    "submission_id": "VS-07",
+    "legal_name": "Pinnacle Design Studio Ltd",
+    "country": "GB",
+    "scenario": "Everything present and consistent; IBAN fails its checksum (transposed digits).",
+    "expected_status": "PENDING_INFO"
+  },
+  {
+    "file": "VS-08_meridian_namesake.json",
+    "submission_id": "VS-08",
+    "legal_name": "Meridian Rail Components LLC",
+    "country": "US",
+    "scenario": "Director's name matches a sanctions entry exactly, but DOB and nationality clear it as a different person.",
+    "expected_status": "APPROVED"
+  },
+  {
+    "file": "VS-09_brightline_resubmitted.json",
+    "submission_id": "VS-09",
+    "legal_name": "Brightline Analytics Ltd",
+    "country": "GB",
+    "scenario": "Brightline resubmits with the previously-missing VAT number and bank letter. Supersedes VS-02.",
+    "expected_status": "APPROVED"
+  },
+  {
+    "file": "VS-10_harbourstone_related_account.json",
+    "submission_id": "VS-10",
+    "legal_name": "Harbourstone Interiors Ltd",
+    "country": "GB",
+    "scenario": "Real, verified company; bank account held by '<Company> Holdings' \u2014 a subtle redirection a similarity threshold alone would miss.",
+    "expected_status": "PENDING_REVIEW"
+  },
+  {
+    "file": "VS-11_fabricated_vendor.json",
+    "submission_id": "VS-11",
+    "legal_name": "Ashcroft Medical Supplies Ltd",
+    "country": "GB",
+    "scenario": "Internally flawless, but the registration number exists in no registry \u2014 a fabricated company that only external verification catches.",
+    "expected_status": "PENDING_REVIEW"
+  }
+]

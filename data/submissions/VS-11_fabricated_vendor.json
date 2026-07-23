@@ -1,0 +1,63 @@
+{
+  "legal_name": "Ashcroft Medical Supplies Ltd",
+  "country": "GB",
+  "entity_type": "Private limited company",
+  "registration_number": "13998201",
+  "tax_id": "GB556201884",
+  "address_line1": "Suite 2, 44 Kingsway",
+  "address_city": "London",
+  "address_postcode": "WC2B 6EN",
+  "address_country": "GB",
+  "contact_name": "Julia Bennett",
+  "contact_email": "j.bennett@ashcroftmedical.co.uk",
+  "website": "https://ashcroftmedical.co.uk",
+  "directors": [
+    "Julia Bennett"
+  ],
+  "bank": {
+    "account_name": "Ashcroft Medical Supplies Ltd",
+    "iban": "GB29HBUK40130099887766",
+    "swift_bic": "HBUKGB4B",
+    "bank_name": "HSBC",
+    "bank_country": "GB"
+  },
+  "documents": [
+    {
+      "doc_type": "incorporation",
+      "filename": "coi_ashcroft.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "certificate_of_incorporation",
+        "legal_name": "Ashcroft Medical Supplies Ltd",
+        "company_number": "13998201",
+        "issue_date": "2022-04-12"
+      },
+      "path": "VS-11/coi_ashcroft.pdf"
+    },
+    {
+      "doc_type": "tax_form",
+      "filename": "vat_ashcroft.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "vat_certificate",
+        "legal_name": "Ashcroft Medical Supplies Ltd",
+        "vat_number": "GB556201884",
+        "issue_date": "2022-05-01"
+      },
+      "path": "VS-11/vat_ashcroft.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "bank_letter_ashcroft.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "bank_letter",
+        "account_name": "Ashcroft Medical Supplies Ltd",
+        "issue_date": "2026-05-25"
+      },
+      "path": "VS-11/bank_letter_ashcroft.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-11"
+}

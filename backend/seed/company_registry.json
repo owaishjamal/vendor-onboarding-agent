@@ -1,0 +1,72 @@
+[
+  {
+    "country": "US",
+    "registration_number": "C4821990",
+    "legal_name": "Northwind Components Inc",
+    "status": "ACTIVE",
+    "incorporation_date": "2016-04-11"
+  },
+  {
+    "country": "GB",
+    "registration_number": "09442817",
+    "legal_name": "Brightline Analytics Ltd",
+    "status": "ACTIVE",
+    "incorporation_date": "2015-01-20"
+  },
+  {
+    "country": "DE",
+    "registration_number": "HRB84721",
+    "legal_name": "Kessler Industrietechnik GmbH",
+    "status": "ACTIVE",
+    "incorporation_date": "2011-09-03"
+  },
+  {
+    "country": "IN",
+    "registration_number": "U17291TN2016PTC112884",
+    "legal_name": "Sundara Textiles Private Limited",
+    "status": "ACTIVE",
+    "incorporation_date": "2016-06-22"
+  },
+  {
+    "country": "US",
+    "registration_number": "C7710455",
+    "legal_name": "Continental Freight Services LLC",
+    "status": "ACTIVE",
+    "incorporation_date": "2018-02-14"
+  },
+  {
+    "country": "SG",
+    "registration_number": "201644821M",
+    "legal_name": "Volkov Maritime Trading Pte Ltd",
+    "status": "ACTIVE",
+    "incorporation_date": "2016-11-30"
+  },
+  {
+    "country": "GB",
+    "registration_number": "11238904",
+    "legal_name": "Pinnacle Design Studio Ltd",
+    "status": "ACTIVE",
+    "incorporation_date": "2018-03-19"
+  },
+  {
+    "country": "US",
+    "registration_number": "C9017722",
+    "legal_name": "Meridian Rail Components LLC",
+    "status": "ACTIVE",
+    "incorporation_date": "2017-07-08"
+  },
+  {
+    "country": "GB",
+    "registration_number": "08812204",
+    "legal_name": "Harbourstone Interiors Ltd",
+    "status": "ACTIVE",
+    "incorporation_date": "2014-05-27"
+  },
+  {
+    "country": "GB",
+    "registration_number": "06655001",
+    "legal_name": "Old Kiln Pottery Ltd",
+    "status": "DISSOLVED",
+    "incorporation_date": "2008-08-08"
+  }
+]

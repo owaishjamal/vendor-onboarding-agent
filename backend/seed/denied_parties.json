@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Dmitri Volkov",
+    "kind": "INDIVIDUAL",
+    "list_name": "OFAC_SDN",
+    "country": "RU",
+    "dob": "1971-08-14",
+    "nationality": "RU",
+    "aliases": [
+      "Dmitriy Volkov",
+      "D. Volkov"
+    ]
+  },
+  {
+    "name": "Kayenne Petrochemical Holdings",
+    "kind": "ENTITY",
+    "list_name": "EU_CFSP",
+    "country": "IR",
+    "aliases": [
+      "Kayenne Petrochemical",
+      "Kayenne Holdings"
+    ]
+  },
+  {
+    "name": "Sergei Antonov",
+    "kind": "INDIVIDUAL",
+    "list_name": "UK_HMT",
+    "country": "BY",
+    "dob": "1968-02-03",
+    "nationality": "BY",
+    "aliases": [
+      "S. Antonov"
+    ]
+  },
+  {
+    "name": "Orion Maritime Logistics FZE",
+    "kind": "ENTITY",
+    "list_name": "OFAC_SDN",
+    "country": "AE",
+    "aliases": [
+      "Orion Maritime"
+    ]
+  }
+]

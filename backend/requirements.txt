@@ -1,0 +1,28 @@
+# --- core runtime
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+python-multipart>=0.0.12   # form uploads (documents)
+
+# --- rules and matching
+pyyaml>=6.0                # country rule packs
+rapidfuzz>=3.10            # entity name matching, denied-party screening
+
+# --- document reading (checks/document_reader.py)
+pdfplumber>=0.11           # PDF text layer
+pymupdf>=1.24              # rasterise pages for OCR / render fixtures
+pytesseract>=0.3.13        # OCR (needs the tesseract-ocr system binary)
+pillow>=10.4
+opencv-python-headless>=4.9  # image preprocessing (deskew/denoise) before OCR
+
+# --- fixture / document generation (scripts/)
+reportlab>=4.2             # renders the sample documents to real PDFs
+
+# --- tests
+pytest>=8.3
+
+# --- optional LLM providers. Install only the one you use.
+# The system runs fully without any of these (LLM_PROVIDER=offline).
+# anthropic>=0.39
+# openai>=1.54
+# google-generativeai>=0.8

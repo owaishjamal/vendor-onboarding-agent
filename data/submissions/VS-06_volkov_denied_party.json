@@ -1,0 +1,53 @@
+{
+  "legal_name": "Volkov Maritime Trading Pte Ltd",
+  "country": "SG",
+  "entity_type": "Private Limited",
+  "registration_number": "201644821M",
+  "tax_id": "201644821M",
+  "address_line1": "12 Marina Boulevard, #18-04",
+  "address_city": "Singapore",
+  "address_postcode": "018980",
+  "address_country": "SG",
+  "contact_name": "Dmitri Volkov",
+  "contact_email": "dvolkov@volkovmaritime.sg",
+  "website": "https://volkovmaritime.sg",
+  "directors": [
+    "Dmitri Volkov",
+    "Chen Wei Ling"
+  ],
+  "director_details": [
+    {
+      "name": "Dmitri Volkov",
+      "dob": "1971-08-14",
+      "nationality": "RU"
+    },
+    {
+      "name": "Chen Wei Ling",
+      "dob": "1985-11-02",
+      "nationality": "SG"
+    }
+  ],
+  "bank": {
+    "account_name": "Volkov Maritime Trading Pte Ltd",
+    "account_number": "3841205577",
+    "swift_bic": "DBSSSGSG",
+    "bank_name": "DBS Bank",
+    "bank_country": "SG"
+  },
+  "documents": [
+    {
+      "doc_type": "incorporation",
+      "filename": "acra_volkov.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "acra_bizfile",
+        "legal_name": "Volkov Maritime Trading Pte Ltd",
+        "registration_number": "201644821M",
+        "issue_date": "2026-02-20"
+      },
+      "path": "VS-06/acra_volkov.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-06"
+}

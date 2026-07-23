@@ -1,0 +1,35 @@
+country: US
+country_name: United States
+
+tax_id:
+  label: EIN (Employer Identification Number)
+  # Two-digit prefix, hyphen, seven digits. The prefix used to encode the
+  # issuing campus; it no longer does, so we validate shape only.
+  regex: "^\\d{2}-\\d{7}$"
+  example: "12-3456789"
+  hint: "Nine digits in the form 12-3456789, as shown on your IRS letter or W-9."
+
+registration_number:
+  label: State registration / incorporation number
+  regex: "^[A-Z0-9\\-]{5,20}$"
+  example: "C4821990"
+  required: false        # varies by state; not a hard requirement
+
+bank:
+  scheme: aba            # routing number + account number, not IBAN
+  account_number:
+    regex: "^\\d{4,17}$"
+  routing_number:
+    label: ABA routing number
+    regex: "^\\d{9}$"
+    checksum: aba        # validated arithmetically, see checks/formats.py
+
+required_documents:
+  - doc_type: tax_form
+    label: IRS Form W-9
+    accepted: [w9]
+  - doc_type: bank_proof
+    label: Bank letter or voided cheque showing account name and number
+    accepted: [bank_letter, voided_cheque, bank_statement]
+
+free_email_domains_allowed: false

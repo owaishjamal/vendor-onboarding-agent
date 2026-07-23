@@ -1,0 +1,37 @@
+country: GB
+country_name: United Kingdom
+
+tax_id:
+  label: VAT registration number
+  # GB followed by 9 digits (standard) or 12 (branch traders).
+  regex: "^GB(\\d{9}|\\d{12})$"
+  example: "GB123456789"
+  hint: "Your VAT number including the GB prefix, e.g. GB123456789."
+
+registration_number:
+  label: Companies House number
+  # 8 digits, or 2 letters + 6 digits for Scottish/NI companies.
+  regex: "^(\\d{8}|[A-Z]{2}\\d{6})$"
+  example: "09876543"
+  required: true
+
+bank:
+  scheme: iban
+  iban:
+    country_prefix: GB
+    length: 22
+  swift_bic:
+    regex: "^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$"
+
+required_documents:
+  - doc_type: incorporation
+    label: Certificate of Incorporation
+    accepted: [certificate_of_incorporation, companies_house_extract]
+  - doc_type: tax_form
+    label: VAT registration certificate
+    accepted: [vat_certificate]
+  - doc_type: bank_proof
+    label: Bank statement header or bank letter showing account name
+    accepted: [bank_letter, bank_statement]
+
+free_email_domains_allowed: false

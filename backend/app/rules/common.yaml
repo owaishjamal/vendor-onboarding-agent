@@ -1,0 +1,51 @@
+# Rules applied regardless of country, plus the thresholds the cross-field
+# checks use. Everything tunable lives here or in config.py - nothing that
+# affects an outcome is buried in a function.
+
+name_matching:
+  # Fuzzy score (0-100) between the vendor's legal name and the name on the
+  # bank account or on an uploaded document.
+  #
+  # Above STRONG: treat as the same entity.
+  # Between WEAK and STRONG: a human looks at it. This band exists because
+  #   "Kessler Industrietechnik GmbH" vs "Kessler Industrietechnik" should pass
+  #   while "Kessler Industrietechnik GmbH" vs "K. Weber" must not.
+  # Below WEAK: different entity. On a bank account that is a payment
+  #   redirection signal, not a typo.
+  strong: 85
+  weak: 60
+
+  # Suffixes stripped before comparison so a legal-form difference alone never
+  # creates a mismatch.
+  strip_suffixes:
+    [ltd, limited, llc, l.l.c, inc, incorporated, corp, corporation, gmbh, mbh,
+     ag, plc, bv, nv, sa, srl, spa, oy, ab, as, pte, pty, co, company, kg, ohg,
+     private, pvt]
+
+free_email_domains:
+  [gmail.com, yahoo.com, hotmail.com, outlook.com, aol.com, icloud.com,
+   proton.me, protonmail.com, gmx.com, mail.com, yandex.com, qq.com]
+
+denied_party_screening:
+  # Fuzzy threshold for a name to count as a denied-party hit. Two bands:
+  # a confident match rejects outright; a near match is escalated to a human
+  # rather than either rejecting a legitimate namesake or waving them through.
+  match_threshold: 88
+  near_match_threshold: 76
+
+document_rules:
+  max_age_months: 12
+
+  # Freshness applies only to documents that ATTEST TO A CURRENT STATE.
+  #
+  # A bank letter is evidence that an account exists and is held by a named
+  # party right now - eighteen months later it proves nothing, because account
+  # details change. So it must be recent.
+  #
+  # A certificate of incorporation is a permanent record of a one-time event.
+  # It does not go stale, and asking a vendor to supply a "recent" one is
+  # asking for something that does not exist. Applying a blanket age limit to
+  # every document is a common and annoying mistake in onboarding portals.
+  #
+  # An explicit expiry_date on a document is always honoured, whatever its type.
+  freshness_required: [bank_proof]

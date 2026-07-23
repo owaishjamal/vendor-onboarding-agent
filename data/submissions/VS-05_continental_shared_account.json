@@ -1,0 +1,52 @@
+{
+  "legal_name": "Continental Freight Services LLC",
+  "country": "US",
+  "entity_type": "LLC",
+  "registration_number": "C7710455",
+  "tax_id": "31-8827104",
+  "address_line1": "2255 Corporate Drive",
+  "address_city": "Memphis, TN",
+  "address_postcode": "38118",
+  "address_country": "US",
+  "contact_name": "Marcus Hale",
+  "contact_email": "m.hale@continentalfreightsvc.com",
+  "website": "https://continentalfreightsvc.com",
+  "directors": [
+    "Marcus Hale"
+  ],
+  "bank": {
+    "account_name": "Continental Freight Services LLC",
+    "account_number": "770154288",
+    "routing_number": "121000031",
+    "bank_name": "Mid-South National Bank",
+    "bank_country": "US"
+  },
+  "documents": [
+    {
+      "doc_type": "tax_form",
+      "filename": "w9_continental.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "w9",
+        "legal_name": "Continental Freight Services LLC",
+        "ein": "31-8827104",
+        "issue_date": "2026-04-02"
+      },
+      "path": "VS-05/w9_continental.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "voided_cheque_continental.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "voided_cheque",
+        "account_name": "Continental Freight Services LLC",
+        "account_number": "770154288",
+        "issue_date": "2026-06-11"
+      },
+      "path": "VS-05/voided_cheque_continental.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-05"
+}

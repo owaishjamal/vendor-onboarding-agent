@@ -1,0 +1,20 @@
+# One-click deploy to Render (https://render.com) — free tier works.
+#
+# Push this repo to GitHub, then in Render: New → Blueprint → pick the repo.
+# Render reads this file, builds the Dockerfile, and gives you a public URL.
+#
+# To use a real LLM instead of the offline composer, add ANTHROPIC_API_KEY in
+# the Render dashboard and set LLM_PROVIDER=anthropic.
+
+services:
+  - type: web
+    name: vendor-onboarding
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: LLM_PROVIDER
+        value: offline
+      - key: CHECK_DELAY_MS
+        value: "250"
+    healthCheckPath: /health

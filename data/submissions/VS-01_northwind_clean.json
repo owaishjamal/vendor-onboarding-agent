@@ -1,0 +1,54 @@
+{
+  "legal_name": "Northwind Components Inc",
+  "trading_name": "Northwind Components",
+  "country": "US",
+  "entity_type": "Corporation",
+  "registration_number": "C4821990",
+  "tax_id": "47-3821990",
+  "address_line1": "1400 Quarry Road, Suite 320",
+  "address_city": "Portland, OR",
+  "address_postcode": "97209",
+  "address_country": "US",
+  "contact_name": "Dana Whitfield",
+  "contact_email": "dana.whitfield@northwindcomponents.com",
+  "website": "https://northwindcomponents.com",
+  "directors": [
+    "Dana Whitfield",
+    "Michael Orr"
+  ],
+  "bank": {
+    "account_name": "Northwind Components Inc",
+    "account_number": "483920117",
+    "routing_number": "021000021",
+    "bank_name": "Pacific Commerce Bank",
+    "bank_country": "US"
+  },
+  "documents": [
+    {
+      "doc_type": "tax_form",
+      "filename": "w9_northwind.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "w9",
+        "legal_name": "Northwind Components Inc",
+        "ein": "47-3821990",
+        "issue_date": "2026-02-11"
+      },
+      "path": "VS-01/w9_northwind.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "bank_letter_northwind.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "bank_letter",
+        "account_name": "Northwind Components Inc",
+        "account_number": "483920117",
+        "issue_date": "2026-05-30"
+      },
+      "path": "VS-01/bank_letter_northwind.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-01"
+}

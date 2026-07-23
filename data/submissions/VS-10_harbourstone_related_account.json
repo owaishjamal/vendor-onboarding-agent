@@ -1,0 +1,64 @@
+{
+  "legal_name": "Harbourstone Interiors Ltd",
+  "country": "GB",
+  "entity_type": "Private limited company",
+  "registration_number": "08812204",
+  "tax_id": "GB194887201",
+  "address_line1": "3 Cooperage Yard, Ropewalk",
+  "address_city": "Bristol",
+  "address_postcode": "BS1 6WE",
+  "address_country": "GB",
+  "contact_name": "Owen Hartley",
+  "contact_email": "owen@harbourstoneinteriors.co.uk",
+  "website": "https://harbourstoneinteriors.co.uk",
+  "directors": [
+    "Owen Hartley",
+    "Rachel Nunes"
+  ],
+  "bank": {
+    "account_name": "Harbourstone Interiors Holdings Ltd",
+    "iban": "GB54LOYD30969912345678",
+    "swift_bic": "LOYDGB2L",
+    "bank_name": "Lloyds Bank",
+    "bank_country": "GB"
+  },
+  "documents": [
+    {
+      "doc_type": "incorporation",
+      "filename": "coi_harbourstone.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "certificate_of_incorporation",
+        "legal_name": "Harbourstone Interiors Ltd",
+        "company_number": "08812204",
+        "issue_date": "2014-05-27"
+      },
+      "path": "VS-10/coi_harbourstone.pdf"
+    },
+    {
+      "doc_type": "tax_form",
+      "filename": "vat_harbourstone.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "vat_certificate",
+        "legal_name": "Harbourstone Interiors Ltd",
+        "vat_number": "GB194887201",
+        "issue_date": "2024-06-01"
+      },
+      "path": "VS-10/vat_harbourstone.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "bank_letter_harbourstone.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "bank_letter",
+        "account_name": "Harbourstone Interiors Holdings Ltd",
+        "issue_date": "2026-05-20"
+      },
+      "path": "VS-10/bank_letter_harbourstone.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-10"
+}

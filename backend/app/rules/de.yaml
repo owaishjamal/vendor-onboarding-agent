@@ -1,0 +1,36 @@
+country: DE
+country_name: Germany
+
+tax_id:
+  label: Umsatzsteuer-Identifikationsnummer (USt-IdNr)
+  regex: "^DE\\d{9}$"
+  example: "DE123456789"
+  hint: "Your VAT ID including the DE prefix, e.g. DE123456789."
+
+registration_number:
+  label: Handelsregisternummer
+  # HRA (partnerships) or HRB (limited companies) followed by digits.
+  regex: "^HR[AB]\\s?\\d{1,6}$"
+  example: "HRB 84721"
+  required: true
+
+bank:
+  scheme: iban
+  iban:
+    country_prefix: DE
+    length: 22
+  swift_bic:
+    regex: "^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$"
+
+required_documents:
+  - doc_type: incorporation
+    label: Handelsregisterauszug (commercial register extract)
+    accepted: [handelsregisterauszug, certificate_of_incorporation]
+  - doc_type: tax_form
+    label: USt-IdNr confirmation
+    accepted: [vat_certificate]
+  - doc_type: bank_proof
+    label: Bank confirmation showing account holder name
+    accepted: [bank_letter, bank_statement]
+
+free_email_domains_allowed: false

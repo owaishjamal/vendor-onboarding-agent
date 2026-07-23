@@ -1,0 +1,29 @@
+[
+  {
+    "vendor_id": "V-2001",
+    "legal_name": "Atlas Haulage Group Inc",
+    "country": "US",
+    "tax_id": "82-4419307",
+    "registration_number": "C3319022",
+    "bank_account_fingerprint": "a145f735d3240c03b908ec5a",
+    "status": "ACTIVE"
+  },
+  {
+    "vendor_id": "V-2002",
+    "legal_name": "Halden Office Interiors Ltd",
+    "country": "GB",
+    "tax_id": "GB884120993",
+    "registration_number": "07741208",
+    "bank_account_fingerprint": "3dfd1287419c6413c67efd67",
+    "status": "ACTIVE"
+  },
+  {
+    "vendor_id": "V-2003",
+    "legal_name": "Ferro Precision Components GmbH",
+    "country": "DE",
+    "tax_id": "DE811204739",
+    "registration_number": "HRB 52108",
+    "bank_account_fingerprint": "42e2bbca290fbd12b3331f22",
+    "status": "ACTIVE"
+  }
+]

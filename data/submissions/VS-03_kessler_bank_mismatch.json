@@ -1,0 +1,63 @@
+{
+  "legal_name": "Kessler Industrietechnik GmbH",
+  "country": "DE",
+  "entity_type": "GmbH",
+  "registration_number": "HRB 84721",
+  "tax_id": "DE294817355",
+  "address_line1": "Industriestrasse 47",
+  "address_city": "Stuttgart",
+  "address_postcode": "70565",
+  "address_country": "DE",
+  "contact_name": "Andreas Kessler",
+  "contact_email": "a.kessler@kessler-it.de",
+  "website": "https://kessler-it.de",
+  "directors": [
+    "Andreas Kessler"
+  ],
+  "bank": {
+    "account_name": "K. Weber Privatkonto",
+    "iban": "DE89370400440532013000",
+    "swift_bic": "COBADEFFXXX",
+    "bank_name": "Commerzbank",
+    "bank_country": "DE"
+  },
+  "documents": [
+    {
+      "doc_type": "incorporation",
+      "filename": "hra_kessler.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "handelsregisterauszug",
+        "legal_name": "Kessler Industrietechnik GmbH",
+        "registration_number": "HRB 84721",
+        "issue_date": "2026-01-15"
+      },
+      "path": "VS-03/hra_kessler.pdf"
+    },
+    {
+      "doc_type": "tax_form",
+      "filename": "ustid_kessler.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "vat_certificate",
+        "legal_name": "Kessler Industrietechnik GmbH",
+        "vat_number": "DE294817355",
+        "issue_date": "2026-01-15"
+      },
+      "path": "VS-03/ustid_kessler.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "bankbestaetigung.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "bank_letter",
+        "account_name": "K. Weber",
+        "issue_date": "2026-06-02"
+      },
+      "path": "VS-03/bankbestaetigung.pdf"
+    }
+  ],
+  "payment_terms": "Net 45",
+  "submission_id": "VS-03"
+}

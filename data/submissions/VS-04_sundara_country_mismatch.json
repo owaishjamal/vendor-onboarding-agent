@@ -1,0 +1,66 @@
+{
+  "legal_name": "Sundara Textiles Private Limited",
+  "country": "IN",
+  "entity_type": "Private Limited",
+  "registration_number": "U17291TN2016PTC112884",
+  "tax_id": "GB428193756",
+  "address_line1": "18 Anna Salai, Guindy",
+  "address_city": "Chennai",
+  "address_postcode": "600032",
+  "address_country": "IN",
+  "contact_name": "Ravi Subramanian",
+  "contact_email": "ravi@sundaratextiles.in",
+  "website": "https://sundaratextiles.in",
+  "directors": [
+    "Ravi Subramanian",
+    "Lakshmi Subramanian"
+  ],
+  "bank": {
+    "account_name": "Sundara Textiles Private Limited",
+    "account_number": "912847100338",
+    "ifsc": "HDFC0001204",
+    "swift_bic": "HDFCINBB",
+    "bank_name": "HDFC Bank",
+    "bank_country": "IN"
+  },
+  "documents": [
+    {
+      "doc_type": "incorporation",
+      "filename": "coi_sundara.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "certificate_of_incorporation",
+        "legal_name": "Sundara Textiles Private Limited",
+        "registration_number": "U17291TN2016PTC112884",
+        "issue_date": "2025-11-08"
+      },
+      "path": "VS-04/coi_sundara.pdf"
+    },
+    {
+      "doc_type": "tax_form",
+      "filename": "gst_sundara.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "gst_certificate",
+        "legal_name": "Sundara Textiles Private Limited",
+        "tax_id": "GB428193756",
+        "issue_date": "2026-03-01"
+      },
+      "path": "VS-04/gst_sundara.pdf"
+    },
+    {
+      "doc_type": "bank_proof",
+      "filename": "cheque_sundara.pdf",
+      "readable": true,
+      "extracted": {
+        "kind": "cancelled_cheque",
+        "account_name": "Sundara Textiles Private Limited",
+        "account_number": "912847100338",
+        "issue_date": "2026-04-19"
+      },
+      "path": "VS-04/cheque_sundara.pdf"
+    }
+  ],
+  "payment_terms": "Net 30",
+  "submission_id": "VS-04"
+}
