@@ -226,6 +226,21 @@ export const SEVERITY_META: Record<SeverityName, { label: string; cls: string; b
   REJECT: { label: "Reject", cls: "bg-rose-50 text-rose-700 ring-rose-300", bar: "bg-rose-500" },
 };
 
+// Map the int severity to a name, so a finding that (for any reason) arrives
+// without severity_name still resolves instead of crashing the render.
+const SEVERITY_BY_INT: Record<number, SeverityName> = {
+  0: "INFO", 1: "ADVISORY", 2: "NEEDS_INFO", 3: "NEEDS_REVIEW", 4: "REJECT",
+};
+
+export function sevMeta(f: { severity_name?: string; severity?: number }) {
+  const name = (f.severity_name as SeverityName) ?? SEVERITY_BY_INT[f.severity ?? 0];
+  return SEVERITY_META[name] ?? SEVERITY_META.INFO;
+}
+
+export function sevName(f: { severity_name?: string; severity?: number }): SeverityName {
+  return (f.severity_name as SeverityName) ?? SEVERITY_BY_INT[f.severity ?? 0] ?? "INFO";
+}
+
 export const shortTime = (iso?: string | null) =>
   iso ? new Date(iso + "Z").toLocaleString(undefined, {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",

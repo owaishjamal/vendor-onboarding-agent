@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckResult, CheckPlan, SeverityName } from "../api";
+import { CheckResult, CheckPlan, SeverityName, sevName } from "../api";
 import { CheckIcon } from "./Badges";
 import FindingCard from "./FindingCard";
 
@@ -7,7 +7,7 @@ const ORDER: SeverityName[] = ["INFO", "ADVISORY", "NEEDS_INFO", "NEEDS_REVIEW",
 
 function worst(r: CheckResult): SeverityName {
   return r.findings.reduce<SeverityName>(
-    (a, f) => (ORDER.indexOf(f.severity_name) > ORDER.indexOf(a) ? f.severity_name : a),
+    (a, f) => { const s = sevName(f); return ORDER.indexOf(s) > ORDER.indexOf(a) ? s : a; },
     "INFO",
   );
 }

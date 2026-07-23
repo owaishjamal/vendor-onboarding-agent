@@ -1,4 +1,4 @@
-import { Finding, SEVERITY_META } from "../api";
+import { Finding, sevMeta, sevName } from "../api";
 import { SeverityChip } from "./Badges";
 
 /**
@@ -12,7 +12,8 @@ import { SeverityChip } from "./Badges";
  * difference between a routine request and tipping off a fraudster.
  */
 export default function FindingCard({ f }: { f: Finding }) {
-  const m = SEVERITY_META[f.severity_name];
+  const m = sevMeta(f);
+  const name = sevName(f);
   const ev = Object.entries(f.evidence || {}).filter(([, v]) => v !== null && v !== undefined);
 
   return (
@@ -20,7 +21,7 @@ export default function FindingCard({ f }: { f: Finding }) {
       <div className={`h-0.5 w-full ${m.bar}`} />
       <div className="p-3">
         <div className="mb-1.5 flex flex-wrap items-center gap-2">
-          <SeverityChip s={f.severity_name} />
+          <SeverityChip s={name} />
           <span className="font-mono text-[10px] font-medium text-slate-500">{f.code}</span>
           {f.field && (
             <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
@@ -40,7 +41,7 @@ export default function FindingCard({ f }: { f: Finding }) {
           </div>
         )}
 
-        {f.severity_name === "NEEDS_REVIEW" && !f.vendor_message && (
+        {name === "NEEDS_REVIEW" && !f.vendor_message && (
           <div className="mt-2 text-[10px] font-medium text-amber-700">
             Internal only — not disclosed to the vendor.
           </div>

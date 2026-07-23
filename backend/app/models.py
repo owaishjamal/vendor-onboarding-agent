@@ -23,7 +23,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +145,15 @@ class Finding(BaseModel):
     message: str                                  # internal / reviewer-facing
     vendor_message: Optional[str] = None          # only for NEEDS_INFO
     evidence: dict[str, Any] = Field(default_factory=dict)
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def severity_name(self) -> str:
+        """Always serialised alongside the int severity, so every consumer —
+        the live SSE stream and the stored case alike — has the label the UI
+        keys on. Without this, streamed findings carried only the int and the
+        client crashed indexing on `undefined`."""
+        return self.severity.name
 
 
 class CheckResult(BaseModel):
