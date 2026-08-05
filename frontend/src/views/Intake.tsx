@@ -19,9 +19,14 @@ export default function Intake({ onFinished }: { onFinished: () => void }) {
   const [showRaw, setShowRaw] = useState(false);
   const [pasted, setPasted] = useState("");
   const [mode, setMode] = useState<"form" | "samples" | "paste">("form");
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [profileId, setProfileId] = useState("default");
   const endRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { api.samples().then(setSamples).catch(() => setSamples([])); }, []);
+  useEffect(() => {
+    api.samples().then(setSamples).catch(() => setSamples([]));
+    api.profiles().then(setProfiles).catch(() => {});
+  }, []);
   useEffect(() => {
     if (running) endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [results.length, running]);
@@ -80,13 +85,29 @@ export default function Intake({ onFinished }: { onFinished: () => void }) {
                 mode === m ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
               }`}
             >
-              {m === "form" ? "Vendor form" : m === "samples" ? "Sample vendors" : "Paste JSON"}
+              {m === "form" ? "Onboarding form" : m === "samples" ? "Sample vendors" : "Paste JSON"}
             </button>
           ))}
         </div>
 
         {mode === "form" ? (
-          <VendorForm onSubmit={runForm} running={running} />
+          <>
+            {profiles.length > 1 && (
+              <div className="flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-2 ring-1 ring-inset ring-indigo-100">
+                <span className="text-[11px] font-medium text-indigo-700">Onboarding template:</span>
+                <select
+                  value={profileId}
+                  onChange={(e) => setProfileId(e.target.value)}
+                  className="flex-1 rounded-md border border-indigo-200 bg-white px-2 py-1 text-xs"
+                >
+                  {profiles.map((p) => (
+                    <option key={p.profile_id} value={p.profile_id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <VendorForm onSubmit={runForm} running={running} profileId={profileId} />
+          </>
         ) : mode === "samples" ? (
           <div className="space-y-2">
             {samples.map((s) => {

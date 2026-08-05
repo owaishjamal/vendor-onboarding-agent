@@ -46,6 +46,40 @@ def run(sub: VendorSubmission) -> CheckResult:
     missing_docs: list[str] = []
     supplied_types: set[str] = set()
 
+    # A profile that extends "blank" is not a vendor-onboarding workflow — an
+    # invoice or a prospect has no directors, bank mandate or W-9. In that case
+    # completeness enforces ONLY what the profile itself declares (its required
+    # fields are owned by custom_rules; its documents are checked below), never
+    # the country vendor pack.
+    from backend.app.profiles.store import get_profile
+    _profile = get_profile(sub.profile_id, sub.country)
+    _vendor_shaped = _profile.extends == "country_defaults"
+
+    if not _vendor_shaped:
+        # Non-onboarding workflow: enforce ONLY the profile's own documents.
+        with Timer() as t2:
+            supplied_types = {d.doc_type for d in sub.documents}
+            for spec in _profile.documents:
+                if not spec.required or spec.key in supplied_types:
+                    continue
+                missing_docs.append(spec.label)
+                findings.append(finding(
+                    FindingCode.MISSING_REQUIRED_DOCUMENT, Severity.NEEDS_INFO, CHECK,
+                    message=f"Required document '{spec.key}' ({spec.label}) was not attached.",
+                    field=f"documents.{spec.key}",
+                    vendor_message=f"{spec.label} is required and was not attached.",
+                    doc_type=spec.key, label=spec.label,
+                ))
+        return CheckResult(
+            check=CHECK, label="Completeness", findings=findings,
+            summary=("All required documents present." if not missing_docs
+                     else f"{len(missing_docs)} required document(s) missing."),
+            duration_ms=t2.ms,
+            data={"missing_fields": [], "missing_documents": missing_docs,
+                  "documents_supplied": sorted(supplied_types),
+                  "profile_shape": "custom"},
+        )
+
     with Timer() as t:
         # --- universal fields
         for attr, label in UNIVERSAL_REQUIRED:
@@ -115,32 +149,15 @@ def run(sub: VendorSubmission) -> CheckResult:
                 ))
 
         # --- documents
+        # Completeness only asks: is a document ATTACHED for each required slot?
+        # Whether the attached file is actually the right *kind* of document is
+        # decided in the `documents` check, which reads the file itself — this
+        # check has no access to the content and must not guess from metadata.
         supplied_types = {d.doc_type for d in sub.documents}
-        supplied_kinds = {
-            (d.extracted.get("kind") or d.doc_type) for d in sub.documents
-        }
 
         for spec in required_documents(country):
             dtype = spec["doc_type"]
             if dtype in supplied_types:
-                # Present, but is it the right kind of document? Vendors
-                # routinely attach a delivery note where a bank letter belongs.
-                accepted = set(spec.get("accepted", []))
-                if accepted and not (supplied_kinds & accepted):
-                    got = next((d for d in sub.documents if d.doc_type == dtype), None)
-                    findings.append(finding(
-                        FindingCode.WRONG_DOCUMENT_TYPE, Severity.NEEDS_INFO, CHECK,
-                        message=(f"A document was supplied for '{dtype}' but it appears "
-                                 f"to be '{got.extracted.get('kind') if got else 'unknown'}', "
-                                 f"not one of {sorted(accepted)}."),
-                        field=f"documents.{dtype}",
-                        vendor_message=(f"The file you attached for {spec['label']} doesn't "
-                                        f"appear to be the right document. Please attach "
-                                        f"{spec['label'].lower()}."),
-                        expected=sorted(accepted),
-                        received=(got.extracted.get("kind") if got else None),
-                        filename=(got.filename if got else None),
-                    ))
                 continue
 
             missing_docs.append(spec["label"])

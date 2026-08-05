@@ -4,17 +4,36 @@ import Intake from "./views/Intake";
 import Queue from "./views/Queue";
 import CaseDetail from "./views/CaseDetail";
 import Rules from "./views/Rules";
+import ProfileBuilder from "./views/ProfileBuilder";
+import VendorPortal from "./views/VendorPortal";
 
-type Tab = "intake" | "queue" | "rules";
+type Tab = "intake" | "queue" | "profiles" | "rules";
+
+/** Read a vendor-portal token from the URL hash: #/vendor/<token> */
+function vendorToken(): string | null {
+  const m = window.location.hash.match(/^#\/vendor\/([A-Za-z0-9_\-]+)/);
+  return m ? m[1] : null;
+}
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("intake");
   const [openCase, setOpenCase] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [health, setHealth] = useState<any>(null);
+  const [vToken, setVToken] = useState<string | null>(vendorToken());
+
+  useEffect(() => {
+    const onHash = () => setVToken(vendorToken());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   useEffect(() => { api.health().then(setHealth).catch(() => setHealth(null)); }, []);
   const go = (t: Tab) => { setTab(t); setOpenCase(null); };
+
+  // Vendor mode: an entirely separate, minimal shell. No approver nav, no
+  // queue, no internal anything — the token is the only credential.
+  if (vToken) return <VendorPortal token={vToken} />;
 
   return (
     <div className="min-h-full">
@@ -23,12 +42,15 @@ export default function App() {
           <div className="flex items-center gap-6">
             <div>
               <div className="text-sm font-semibold tracking-tight text-slate-900">
-                Vendor Onboarding
+                {health?.app_title ?? "Vendor Onboarding"}
               </div>
-              <div className="text-[11px] text-slate-500">Submission in, decided status out</div>
+              <div className="text-[11px] text-slate-500">
+                {health?.app_subtitle ?? "Submission in, decided status out"}
+              </div>
             </div>
             <nav className="flex gap-1">
-              {([["intake", "Intake"], ["queue", "Review queue"], ["rules", "Rules"]] as [Tab, string][])
+              {([["intake", "New vendor"], ["queue", "Review queue"],
+                 ["profiles", "Templates"], ["rules", "Rules"]] as [Tab, string][])
                 .map(([k, label]) => (
                   <button key={k} onClick={() => go(k)}
                     className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -68,6 +90,7 @@ export default function App() {
         {tab === "queue" && (openCase
           ? <CaseDetail caseId={openCase} onBack={() => setOpenCase(null)} />
           : <Queue nonce={nonce} onOpen={setOpenCase} />)}
+        {tab === "profiles" && <ProfileBuilder />}
         {tab === "rules" && <Rules nonce={nonce} />}
       </main>
     </div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { api, Preflight } from "../api";
 
 /**
  * A real vendor onboarding form — the surface a supplier would actually fill
@@ -18,7 +18,8 @@ export interface FormPayload {
 }
 
 type Director = { name: string; dob: string; nationality: string };
-type DocSlot = { doc_type: string; label: string; accepted: string[]; file?: File };
+type DocSlot = { doc_type: string; label: string; accepted: string[]; file?: File;
+                 checking?: boolean; verdict?: Preflight };
 
 const BLANK = {
   legal_name: "", trading_name: "", country: "", entity_type: "",
@@ -30,32 +31,87 @@ const BLANK = {
   bank_name: "", bank_country: "",
 };
 
-export default function VendorForm({ onSubmit, running }: {
+const CORE_KEYS = new Set(["legal_name", "registration_number", "tax_id", "bank.account_name"]);
+
+export default function VendorForm({ onSubmit, running, profileId = "default", initial, hideSamples }: {
   onSubmit: (p: FormPayload) => void; running: boolean;
+  profileId?: string; initial?: any; hideSamples?: boolean;
 }) {
   const [countries, setCountries] = useState<any[]>([]);
   const [samples, setSamples] = useState<any[]>([]);
   const [f, setF] = useState({ ...BLANK });
   const [directors, setDirectors] = useState<Director[]>([{ name: "", dob: "", nationality: "" }]);
   const [docs, setDocs] = useState<DocSlot[]>([]);
+  const [profile, setProfile] = useState<any>(null);
+  const [customVals, setCustomVals] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api.countries().then(setCountries).catch(() => {});
-    api.samples().then(setSamples).catch(() => {});
-  }, []);
+    if (!hideSamples) api.samples().then(setSamples).catch(() => {});
+  }, [hideSamples]);
 
   const country = useMemo(() => countries.find((c) => c.code === f.country), [countries, f.country]);
   const scheme: string = country?.bank_scheme ?? "iban";
 
-  // When the country changes, rebuild the required-document slots.
+  // The Requirement Profile drives the document slots AND the custom fields.
+  // "default" resolves to the country packs, so behaviour without a chosen
+  // profile is exactly what it always was.
   useEffect(() => {
-    if (!country) { setDocs([]); return; }
-    setDocs((country.required_documents ?? []).map((d: any) => ({
-      doc_type: d.doc_type, label: d.label, accepted: d.accepted ?? [],
-    })));
-  }, [country]);
+    if (!f.country) { setDocs([]); setProfile(null); return; }
+    api.profile(profileId || "default", f.country).then((p) => {
+      setProfile(p);
+      setDocs((p.documents ?? []).map((d: any) => ({
+        doc_type: d.key, label: d.label, accepted: d.accepted ?? [],
+      })));
+    }).catch(() => setProfile(null));
+  }, [f.country, profileId]);
+
+  const customFields = useMemo(
+    () => (profile?.fields ?? []).filter((s: any) => !CORE_KEYS.has(s.key)),
+    [profile]);
+
+  // Seed the form from an existing submission (vendor portal resubmission).
+  useEffect(() => {
+    if (!initial) return;
+    setF({
+      ...BLANK,
+      legal_name: initial.legal_name ?? "", trading_name: initial.trading_name ?? "",
+      country: initial.country ?? "", entity_type: initial.entity_type ?? "",
+      registration_number: initial.registration_number ?? "", tax_id: initial.tax_id ?? "",
+      address_line1: initial.address_line1 ?? "", address_city: initial.address_city ?? "",
+      address_postcode: initial.address_postcode ?? "", address_country: initial.address_country ?? "",
+      contact_name: initial.contact_name ?? "", contact_email: initial.contact_email ?? "",
+      website: initial.website ?? "",
+      bank_account_name: initial.bank?.account_name ?? "", bank_iban: initial.bank?.iban ?? "",
+      bank_account_number: initial.bank?.account_number ?? "",
+      bank_routing_number: initial.bank?.routing_number ?? "", bank_ifsc: initial.bank?.ifsc ?? "",
+      bank_swift_bic: initial.bank?.swift_bic ?? "", bank_name: initial.bank?.bank_name ?? "",
+      bank_country: initial.bank?.bank_country ?? "",
+    });
+    const dd = (initial.director_details?.length
+      ? initial.director_details
+      : (initial.directors ?? []).map((n: string) => ({ name: n, dob: "", nationality: "" }))
+    ).map((d: any) => ({ name: d.name ?? "", dob: d.dob ?? "", nationality: d.nationality ?? "" }));
+    setDirectors(dd.length ? dd : [{ name: "", dob: "", nationality: "" }]);
+    setCustomVals(Object.fromEntries(
+      Object.entries(initial.custom_fields ?? {}).map(([k, v]) => [k, String(v ?? "")])));
+  }, [initial]);
 
   const set = (k: keyof typeof BLANK, v: string) => setF((p) => ({ ...p, [k]: v }));
+
+  // On attach, verify the document immediately (preflight) so a wrong or
+  // irrelevant file is flagged before the vendor ever submits.
+  const onDocFile = async (i: number, file?: File) => {
+    setDocs((p) => p.map((x, k) => k === i ? { ...x, file, verdict: undefined, checking: !!file } : x));
+    if (!file) return;
+    const slot = docs[i];
+    try {
+      const verdict = await api.preflight(file, slot.doc_type, f.country, f.legal_name);
+      setDocs((p) => p.map((x, k) => k === i ? { ...x, checking: false, verdict } : x));
+    } catch {
+      setDocs((p) => p.map((x, k) => k === i ? { ...x, checking: false } : x));
+    }
+  };
 
   // --- prefill from a bundled example (fills text fields to save typing) ----
   const prefill = async (file: string) => {
@@ -99,6 +155,9 @@ export default function VendorForm({ onSubmit, running }: {
     });
 
     const submission: any = {
+      profile_id: profileId || "default",
+      custom_fields: Object.fromEntries(
+        Object.entries(customVals).filter(([, v]) => v !== "")),
       legal_name: f.legal_name, trading_name: f.trading_name || null,
       country: f.country, entity_type: f.entity_type || null,
       registration_number: f.registration_number || null, tax_id: f.tax_id || null,
@@ -118,6 +177,7 @@ export default function VendorForm({ onSubmit, running }: {
   return (
     <div className="space-y-4">
       {/* prefill */}
+      {!hideSamples && (
       <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2">
         <span className="text-[11px] font-medium text-slate-500">Start from an example:</span>
         <select
@@ -131,6 +191,7 @@ export default function VendorForm({ onSubmit, running }: {
           ))}
         </select>
       </div>
+      )}
 
       <Section title="Company details">
         <Field label="Registered legal name" req value={f.legal_name} onChange={(v) => set("legal_name", v)} />
@@ -220,27 +281,71 @@ export default function VendorForm({ onSubmit, running }: {
         </div>
       </Section>
 
+      {customFields.length > 0 && (
+        <Section title={profile?.name ?? "Additional requirements"}
+          note="Requirements specific to this onboarding profile. Each is validated automatically.">
+          {customFields.map((s: any) => (
+            <div key={s.key}>
+              {s.type === "select" ? (
+                <div>
+                  <Label text={s.label} req={s.required} />
+                  <select
+                    value={customVals[s.key] ?? ""}
+                    onChange={(e) => setCustomVals((p) => ({ ...p, [s.key]: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                  >
+                    <option value="">Select…</option>
+                    {(s.options ?? []).map((o: string) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <Field
+                  label={s.label} req={s.required}
+                  value={customVals[s.key] ?? ""}
+                  onChange={(v) => setCustomVals((p) => ({ ...p, [s.key]: v }))}
+                  placeholder={s.type === "date" ? "YYYY-MM-DD" : undefined}
+                  hint={s.hint}
+                />
+              )}
+            </div>
+          ))}
+        </Section>
+      )}
+
       <Section title="Documents"
-        note={country ? "Upload the documents required for this country. They're read and cross-checked against the form."
+        note={country ? "Upload the documents this profile requires. They're read and cross-checked against the form."
           : "Select a country to see the required documents."}>
         {!docs.length && country && <p className="text-xs text-slate-400">No specific documents required.</p>}
-        {docs.map((d, i) => (
-          <div key={d.doc_type} className="rounded-lg border border-slate-200 p-2.5">
+        {docs.map((d, i) => {
+          const vlevel = d.verdict?.level;
+          const ring = vlevel === "error" ? "border-rose-300 bg-rose-50/40"
+            : vlevel === "warn" ? "border-amber-300 bg-amber-50/40"
+            : vlevel === "ok" ? "border-emerald-300 bg-emerald-50/40" : "border-slate-200";
+          return (
+          <div key={d.doc_type} className={`rounded-lg border p-2.5 ${ring}`}>
             <div className="flex items-center justify-between">
               <div className="text-xs font-medium text-slate-700">{d.label}</div>
-              {d.file && <span className="text-[10px] font-medium text-emerald-600">✓ {d.file.name}</span>}
+              {d.file && <span className="text-[10px] font-medium text-slate-500 truncate max-w-[45%]">{d.file.name}</span>}
             </div>
             <div className="mt-0.5 text-[10px] text-slate-400">
               accepts: {d.accepted.join(", ") || "any"} · PDF or image
             </div>
             <input type="file" accept="application/pdf,image/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                setDocs((p) => p.map((x, k) => k === i ? { ...x, file } : x));
-              }}
+              onChange={(e) => onDocFile(i, e.target.files?.[0])}
               className="mt-1.5 block w-full text-[11px] file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-2 file:py-1 file:text-[11px] file:font-medium" />
+            {d.checking && (
+              <div className="mt-1.5 text-[11px] text-slate-500">Checking the document…</div>
+            )}
+            {d.verdict && !d.checking && (
+              <div className={`mt-1.5 flex items-start gap-1.5 text-[11px] leading-snug ${
+                vlevel === "error" ? "text-rose-700" : vlevel === "warn" ? "text-amber-700" : "text-emerald-700"}`}>
+                <span>{vlevel === "error" ? "✕" : vlevel === "warn" ? "⚠" : "✓"}</span>
+                <span>{d.verdict.message}</span>
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </Section>
 
       <div className="sticky bottom-0 -mx-1 bg-gradient-to-t from-white via-white to-transparent pt-3">

@@ -213,7 +213,11 @@ def _parse_fields(text: str) -> dict[str, Any]:
 
     number = _find_labelled(lines, LABELS["number"])
     if number:
-        fields["number"] = number.split()[0].strip() if number.split() else number
+        # Keep the full identifier, not just the first token — registration
+        # numbers like "HRB 84721" or "U74999 MH2015" contain spaces. Match a
+        # letter-prefixed or numeric identifier sequence.
+        m = re.match(r"([A-Z]{0,6}\s?-?\d[\w\-\/]*(?:\s\d[\w\-\/]*)*)", number.strip(), re.I)
+        fields["number"] = (m.group(1).strip() if m else number.split()[0]).strip()
 
     for key in ("issue_date", "expiry_date"):
         raw = _find_labelled(lines, LABELS[key])
@@ -229,7 +233,7 @@ def _parse_fields(text: str) -> dict[str, Any]:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-EXTRACTOR_VERSION = "read.v2"
+EXTRACTOR_VERSION = "read.v3"   # v3: full multi-token identifiers (HRB 84721)
 
 
 def _cache_path(digest: str) -> Path:
@@ -442,6 +446,25 @@ def _extract_vision(data: bytes, suffix: str) -> Optional[ReadResult]:
                            {"url": f"data:image/png;base64,{b64}"}}]}],
         )
         raw = r.choices[0].message.content
+    elif cfg.LLM_PROVIDER == "gemini" and cfg.GEMINI_API_KEY:
+        import urllib.request
+        model = cfg.LLM_MODEL or "gemini-flash-latest"
+        body = {
+            "system_instruction": {"parts": [{"text": _VISION_SYSTEM}]},
+            "contents": [{"parts": [
+                {"text": "Extract the fields as JSON."},
+                {"inline_data": {"mime_type": "image/png", "data": b64}},
+            ]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 500},
+        }
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "X-goog-api-key": cfg.GEMINI_API_KEY},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            gdata = json.loads(resp.read().decode())
+        raw = gdata["candidates"][0]["content"]["parts"][0]["text"]
     else:
         return None  # no vision provider configured -> fall back to OCR
 

@@ -1,4 +1,4 @@
-# Vendor Onboarding
+# Zamp — Vendor Onboarding & Verification
 
 **A vendor submission goes in. A decided status comes out — approved, pending, or rejected — with every reason visible and, where appropriate, a drafted reply to the vendor.**
 
@@ -13,6 +13,19 @@ Before a company can pay a supplier, someone has to verify they are legitimate: 
 In practice vendors submit incomplete forms, attach the wrong documents, and supply details that contradict each other in ways only visible when you put two fields side by side. When something is missing, someone chases it manually. The review is manual, the follow-up is manual, and the only audit trail is whatever is in somebody's inbox.
 
 A bad onboarding — a vendor who slips through with inconsistent details — causes payment fraud, compliance breaches, or both.
+
+---
+
+## The workflow
+
+1. Vendor fills the onboarding form (fields driven by the client's template).
+2. Vendor uploads the required documents — each is checked **on attach**, so a wrong file is flagged before submitting.
+3. The AI extracts data from every document and compares it against the form.
+4. An **overall confidence score** is computed from read quality, document classification, form-vs-document corroboration, and how much was left ambiguous.
+5. **High confidence + clean → Auto Approve. Disqualifying finding → Auto Reject. Anything else → Manual Review.**
+6. The reviewer opens one **verification report** — extracted vs submitted, field by field, mismatches highlighted, missing documents, confidence with its components, the AI's reasoning and its recommendation — then clicks Approve, Reject, or Request more information.
+
+Confidence can only ever move a case **towards** a human. A low score can block an auto-approval; it can never turn a flagged case into an approval.
 
 ---
 
@@ -84,15 +97,16 @@ By the time either prompt runs, the status and every finding are already fixed. 
 - **[docs/HLD.md](docs/HLD.md)** — one-page high-level design with a system diagram.
 - **[docs/Architecture.md](docs/Architecture.md)** — full component detail.
 - **[DEPLOY.md](DEPLOY.md)** — how to get a live URL, and exactly **how it behaves on new/unseen inputs**.
-- **[PRODUCTIZATION.md](PRODUCTIZATION.md)** — honest map from case study to enterprise product (what's a swap-in vs a rebuild vs non-code).
 
-## Productization seams (all default-off)
+## Document Verification Agent (DVA)
 
-The architecture is built so enterprise requirements are swap-ins, not rewrites. Each is off/permissive by default so the demo and tests are unaffected:
+Documents are handled by a dedicated agent (`backend/app/dva/`) that verifies **any** document, generalising to layouts it has never seen — because it classifies by **content**, not headings:
 
-- **Document processing** — OpenCV preprocessing before OCR, read-caching by file hash, and a pluggable extractor (`DOC_EXTRACTOR=vision` uses a vision-language model for arbitrary layouts; falls back to OCR with no key).
-- **Data providers** — registry and screening are behind interfaces; a real Companies House provider ships in-code (`REGISTRY_PROVIDER=companies_house` + key), sanctions feeds plug in the same way.
-- **Enterprise** — optional bearer auth (`API_TOKEN`), per-tenant isolation (`X-Org-Id`), upload validation, `/metrics`, structured logs (`LOG_JSON=1`).
+- **Relevance** — content signals decide what a document actually is (an IBAN + account holder → bank letter; "work experience / skills / education" → a CV). A resume, invoice, or wrong certificate dropped into a required slot is flagged, not silently accepted.
+- **Consistency** — the name/number on the document is cross-referenced against the form, so a certificate describing a different company surfaces.
+- **Authenticity / currency** — readability confidence, expiry, and staleness.
+
+It runs at two points: inside the pipeline (per document), and at **submission time** — `POST /v1/documents/preflight` verifies a single file the instant it's attached, so the form shows *"This looks like a resume / CV, not a bank proof"* before the vendor ever submits. Offline by content signals; `DOC_EXTRACTOR=vision` swaps in a vision model for the classification.
 
 ## Quickstart
 
@@ -124,23 +138,20 @@ No API key required — `LLM_PROVIDER=offline` composes both documents from temp
 Ports are 8001/5174 so this runs alongside the PS-1 build on 8000/5173.
 
 ```bash
-make test          # 95 tests
+make test          # 127 tests
 make eval          # metrics on the 11 golden cases
-make eval-volume   # the same metrics on 250 generated cases, incl. plausible fraud
-make calibrate     # sweep the screening threshold and show the tradeoff curve
 make reset         # clear case history
 ```
 
-`make eval-volume` prints the number a buyer actually trusts — measured at scale, not on the handful of cases the author designed:
+`make eval` scores the 11 labelled cases:
 
 ```
-  Status accuracy .............. 250/250  (100.0%)
-  Auto-approve precision ....... 100.0%   (25 correct, 0 WRONG of 25 auto-approvals)
-  Fraud / compliance recall .... 100.0%   (125/125 signal cases caught)
-  False-positive rate .......... 0.0%   (clean vendors wrongly sent to review)
+  Status accuracy .............. 11/11  (100%)
+  Auto-approve precision ....... 100%   (0 wrong auto-approvals)
+  Fraud / compliance recall .... 100%   (6/6 signal cases caught)
+  False-positive flags ......... 0
 ```
 
-The generated set includes the *plausible* fraud a similarity threshold alone would miss (an account named "&lt;Company&gt; Holdings", a fabricated-but-internally-consistent company). It found a real miss during development — subtle-name fraud slipped at 96% — which was root-caused and fixed; it now holds at 100%. `make calibrate` shows *why* the thresholds are set where they are.
 
 ---
 
@@ -164,10 +175,11 @@ The generated set includes the *plausible* fraud a similarity threshold alone wo
       │                            claimed country vs address country,
       │                            email domain vs stated website.
       │
-      ├─ 4  DOCUMENTS ............ each attachment is READ (PDF text layer or
-      │                            OCR for scans), its type detected, and its
-      │                            name/number/dates cross-referenced to the
-      │                            form. Low-confidence reads route to the vendor.
+      ├─ 4  DOCUMENTS ............ a Document Verification Agent reads each file,
+      │                            CLASSIFIES it by content (not heading), cross-
+      │                            references name/number to the form, and checks
+      │                            it's readable + in date. A CV in a bank-proof
+      │                            slot is caught; wrong/irrelevant docs flagged.
       │
       ├─ 5  REGISTRY ............. confirms the registration number EXISTS, is
       │                            active, and is registered to this name —
@@ -291,10 +303,8 @@ frontend/src/views/       Intake, Queue (aging + overrides), CaseDetail, Rules
 frontend/src/components/  ReviewerActions, CheckTimeline, FindingCard, Badges
 scripts/build_fixtures.py generates reference data, submissions, and documents
 scripts/render_documents.py renders each document to a real PDF / scan
-scripts/evaluate.py       metrics on the 11 golden cases
-scripts/eval_volume.py    metrics on 250 generated cases incl. plausible fraud
-scripts/calibrate.py      threshold sensitivity sweep
-tests/                    95 tests
+scripts/evaluate.py       metrics on the 11 labelled cases
+tests/                    127 tests
 ```
 
 ---

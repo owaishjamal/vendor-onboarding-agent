@@ -19,7 +19,7 @@ from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, UploadFil
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from backend.app import config, enterprise
+from backend.app import config
 from backend.app.llm.client import get_llm
 from backend.app.models import Severity, VendorSubmission
 from backend.app.pipeline.runner import CHECK_PLAN, run_pipeline
@@ -29,7 +29,6 @@ from backend.app.rules import (
 from backend.app.storage import cases as casestore
 from backend.app.storage import db
 
-enterprise.configure_logging()
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)-7s %(name)s | %(message)s")
 log = logging.getLogger("vo.api")
@@ -37,7 +36,6 @@ log = logging.getLogger("vo.api")
 app = FastAPI(title="Vendor Onboarding", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])
-app.middleware("http")(enterprise.timing_middleware)
 
 
 @app.on_event("startup")
@@ -47,19 +45,24 @@ def _startup() -> None:
              ",".join(supported_countries()), get_llm().provider)
 
 
+def _validate_upload(filename: str, size_bytes: int) -> None:
+    """Basic upload hygiene: allowed type, sane size."""
+    ext = Path(filename or "").suffix.lower()
+    if ext not in config.ALLOWED_UPLOAD_EXT:
+        raise HTTPException(415, f"unsupported file type '{ext}'. "
+                                 f"allowed: {sorted(config.ALLOWED_UPLOAD_EXT)}")
+    if size_bytes > config.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"file exceeds {config.MAX_UPLOAD_MB} MB limit")
+
+
 # ---------------------------------------------------------------------------
 # Meta
 # ---------------------------------------------------------------------------
 
-@app.get("/metrics")
-def metrics():
-    from fastapi.responses import PlainTextResponse
-    return PlainTextResponse(enterprise.render_metrics())
-
-
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "llm_provider": get_llm().provider,
+            "app_title": config.APP_TITLE, "app_subtitle": config.APP_SUBTITLE,
             "llm_cache": config.LLM_CACHE_ENABLED,
             "check_delay_ms": config.CHECK_DELAY_MS,
             "countries": list(supported_countries())}
@@ -100,36 +103,35 @@ def policy() -> dict:
 # Cases
 # ---------------------------------------------------------------------------
 
-def _sse(events: Iterator[dict]) -> Iterator[str]:
-    yield f"event: plan\ndata: {json.dumps(CHECK_PLAN)}\n\n"
+def _sse(events: Iterator[dict], plan: list[dict] | None = None) -> Iterator[str]:
+    yield f"event: plan\ndata: {json.dumps(plan or CHECK_PLAN)}\n\n"
     for ev in events:
         yield f"event: {ev['type']}\ndata: {json.dumps(ev, default=str)}\n\n"
 
 
-def _stream(sub: VendorSubmission, tenant: str = "demo") -> StreamingResponse:
-    enterprise.incr("cases_submitted_total", tenant=tenant)
+def _stream(sub: VendorSubmission) -> StreamingResponse:
+    from backend.app.pipeline.runner import plan_for
     return StreamingResponse(
-        _sse(run_pipeline(sub, tenant=tenant)), media_type="text/event-stream",
+        _sse(run_pipeline(sub), plan_for(sub)),
+        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                  "Connection": "keep-alive"},
     )
 
 
 @app.post("/v1/cases/stream")
-def run_submission(payload: dict[str, Any] = Body(...),
-                   tenant: str = Depends(enterprise.tenant_of)) -> StreamingResponse:
+def run_submission(payload: dict[str, Any] = Body(...)) -> StreamingResponse:
     try:
         sub = VendorSubmission(**payload)
     except Exception as exc:
         raise HTTPException(422, f"invalid submission: {exc}")
-    return _stream(sub, tenant)
+    return _stream(sub)
 
 
 @app.post("/v1/cases/form/stream")
 async def run_form(
     submission: str = Form(...),
     files: list[UploadFile] = File(default=[]),
-    tenant: str = Depends(enterprise.tenant_of),
 ) -> StreamingResponse:
     """Run a submission built in the vendor form, WITH real uploaded documents.
 
@@ -153,7 +155,7 @@ async def run_form(
             continue
         blob = await f.read()
         # Enterprise hygiene: extension allowlist + size cap before we touch it.
-        enterprise.validate_upload(f.filename, len(blob))
+        _validate_upload(f.filename, len(blob))
         dest = updir / Path(f.filename).name
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(blob)
@@ -169,7 +171,136 @@ async def run_form(
         sub = VendorSubmission(**data)
     except Exception as exc:
         raise HTTPException(422, f"invalid submission: {exc}")
-    return _stream(sub, tenant)
+    return _stream(sub)
+
+
+# ---------------------------------------------------------------------------
+# Vendor portal (token-scoped; structurally vendor-safe)
+# ---------------------------------------------------------------------------
+#
+# NOTE: these endpoints are exempt from the approver API_TOKEN auth — the
+# vendor's per-case token IS the credential. The middleware allows /v1/vendor.
+
+@app.get("/v1/vendor/{token}")
+def vendor_case(token: str) -> dict:
+    v = casestore.vendor_view(token)
+    if not v:
+        raise HTTPException(404, "unknown or expired link")
+    return v
+
+
+@app.post("/v1/vendor/{token}/resubmit")
+async def vendor_resubmit(
+    token: str,
+    submission: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+) -> StreamingResponse:
+    """A vendor fixes what was requested and resubmits through their link.
+
+    Runs the full pipeline as a resubmission under the SAME tenant as the
+    original case — the entity-key linkage then supersedes the old case and
+    produces the resolved/remaining diff automatically.
+    """
+    ref = casestore.token_case(token)
+    if not ref:
+        raise HTTPException(404, "unknown or expired link")
+
+    try:
+        data = json.loads(submission)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, f"invalid submission JSON: {exc}")
+
+    uid = uuid.uuid4().hex[:12]
+    updir = config.DATA_DIR / "documents" / "uploads" / uid
+    saved: dict[str, str] = {}
+    for f in files:
+        if not f.filename:
+            continue
+        blob = await f.read()
+        _validate_upload(f.filename, len(blob))
+        dest = updir / Path(f.filename).name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(blob)
+        saved[Path(f.filename).name] = f"uploads/{uid}/{Path(f.filename).name}"
+    for d in data.get("documents", []):
+        fn = Path(d.get("filename", "")).name
+        if fn in saved:
+            d["path"] = saved[fn]
+
+    try:
+        sub = VendorSubmission(**data)
+    except Exception as exc:
+        raise HTTPException(422, f"invalid submission: {exc}")
+    return _stream(sub)
+
+
+# ---------------------------------------------------------------------------
+# Onboarding templates (what a client asks its vendors for)
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/profiles")
+def profiles_list() -> list[dict]:
+    from backend.app.profiles.store import list_profiles
+    return list_profiles()
+
+
+@app.get("/v1/profiles/{profile_id}")
+def profiles_get(profile_id: str, country: str = "") -> dict:
+    from backend.app.profiles.store import get_profile
+    return get_profile(profile_id, country).model_dump(by_alias=True)
+
+
+@app.put("/v1/profiles/{profile_id}")
+def profiles_save(profile_id: str, payload: dict[str, Any] = Body(...)) -> dict:
+    from backend.app.profiles.models import RequirementProfile
+    from backend.app.profiles.store import save_profile
+    payload["profile_id"] = profile_id
+    try:
+        return save_profile(RequirementProfile(**payload)).model_dump(by_alias=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(422, f"invalid template: {exc}")
+
+
+@app.delete("/v1/profiles/{profile_id}")
+def profiles_delete(profile_id: str) -> dict:
+    from backend.app.profiles.store import delete_profile
+    try:
+        return {"deleted": delete_profile(profile_id)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/v1/documents/preflight")
+async def documents_preflight(
+    file: UploadFile = File(...),
+    doc_type: str = Form(...),
+    country: str = Form(default=""),
+    legal_name: str = Form(default=""),
+) -> dict:
+    """Verify one uploaded document instantly, before the form is submitted.
+
+    Lets the UI flag "that looks like a resume, not a bank letter" the moment a
+    file is attached — the Document Verification Agent run on a single file.
+    """
+    from backend.app.dva.preflight import preflight
+
+    blob = await file.read()
+    enterprise.validate_upload(file.filename or "file", len(blob))
+
+    accepted: set[str] = set()
+    try:
+        specs = load_country_rules(country).get("required_documents", []) if country else []
+    except FileNotFoundError:
+        specs = []
+    for spec in specs:
+        if spec.get("doc_type") == doc_type:
+            accepted = set(spec.get("accepted", []))
+            break
+
+    return preflight(blob, file.filename or "upload", doc_type, accepted,
+                     legal_name or None)
 
 
 @app.get("/v1/samples")
@@ -190,21 +321,18 @@ def sample_body(name: str) -> dict:
 
 
 @app.post("/v1/cases/sample/{name}/stream")
-def run_sample(name: str, tenant: str = Depends(enterprise.tenant_of)) -> StreamingResponse:
+def run_sample(name: str) -> StreamingResponse:
     path: Path = config.SUBMISSION_DIR / name
     if not path.resolve().is_relative_to(config.SUBMISSION_DIR.resolve()):
         raise HTTPException(400, "invalid sample name")
     if not path.exists():
         raise HTTPException(404, f"no such sample: {name}")
-    return _stream(VendorSubmission(**json.loads(path.read_text())), tenant)
+    return _stream(VendorSubmission(**json.loads(path.read_text())))
 
 
 @app.get("/v1/cases")
-def list_cases(limit: int = 200, tenant: str = Depends(enterprise.tenant_of)) -> list[dict]:
-    # In the demo (tenant='demo') this returns everything; a real customer only
-    # ever sees their own org's cases. The isolation seam is here.
-    scope = None if tenant == "demo" else tenant
-    return casestore.list_cases(limit, tenant=scope)
+def list_cases(limit: int = 200) -> list[dict]:
+    return casestore.list_cases(limit)
 
 
 @app.get("/v1/cases/{case_id}")
@@ -218,16 +346,6 @@ def get_case(case_id: str) -> dict:
 @app.get("/v1/stats")
 def stats() -> dict:
     return casestore.stats()
-
-
-@app.get("/v1/overrides")
-def overrides() -> dict:
-    """Where reviewers disagreed with the automated decision, by check.
-
-    A live calibration signal: a check that is overridden often is either too
-    aggressive (crying wolf) or too permissive (missing things).
-    """
-    return casestore.override_report()
 
 
 @app.post("/v1/cases/{case_id}/action")

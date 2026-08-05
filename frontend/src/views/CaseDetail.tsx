@@ -3,11 +3,12 @@ import { Case, statusMeta, api, shortTime, flag } from "../api";
 import CheckTimeline from "../components/CheckTimeline";
 import FindingCard from "../components/FindingCard";
 import ReviewerActions from "../components/ReviewerActions";
+import VerificationReport from "../components/VerificationReport";
 import { StatusBadge } from "../components/Badges";
 
 export default function CaseDetail({ caseId, onBack }: { caseId: string; onBack: () => void }) {
   const [c, setCase] = useState<Case | null>(null);
-  const [tab, setTab] = useState<"findings" | "checks" | "submission">("findings");
+  const [tab, setTab] = useState<"report" | "findings" | "checks" | "submission">("report");
 
   const reload = () => api.case(caseId).then(setCase).catch(() => setCase(null));
   useEffect(() => { reload(); }, [caseId]);
@@ -15,6 +16,10 @@ export default function CaseDetail({ caseId, onBack }: { caseId: string; onBack:
 
   const meta = statusMeta(c.status);
   const cs = c.change_summary;
+  const fv = (c.checks ?? []).find((x) => x.check === "field_verification");
+  const matrix: any[] = fv?.data?.matrix ?? [];
+  const vendorLink = (c as any).vendor_token
+    ? `${window.location.origin}/#/vendor/${(c as any).vendor_token}` : null;
 
   const findings = (c.findings ?? []).filter((f) => f.severity_name !== "INFO");
   const blocking = findings.filter((f) => ["NEEDS_REVIEW", "REJECT"].includes(f.severity_name));
@@ -80,6 +85,49 @@ export default function CaseDetail({ caseId, onBack }: { caseId: string; onBack:
         )}
       </div>
 
+      {vendorLink && (
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Vendor portal link
+          </span>
+          <code className="flex-1 truncate rounded bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-600">
+            {vendorLink}
+          </code>
+          <button
+            onClick={() => navigator.clipboard?.writeText(vendorLink)}
+            className="rounded-lg bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-slate-800"
+          >
+            Copy
+          </button>
+          <span className="text-[10px] text-slate-400">
+            shows only status + requested items
+          </span>
+        </div>
+      )}
+
+      {!!(c as any).outcomes?.length && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold text-slate-800">Downstream actions</h3>
+          <p className="mb-2 text-[11px] text-slate-400">
+            What the profile routed on this decision. Side effects are audited too.
+          </p>
+          <ul className="space-y-1.5">
+            {(c as any).outcomes.map((o: any, i: number) => (
+              <li key={i} className="flex items-start gap-2 text-xs">
+                <span className={o.ok ? "text-emerald-600" : "text-amber-600"}>
+                  {o.ok ? "✓" : "!"}
+                </span>
+                <div>
+                  <span className="font-medium text-slate-800">{o.action}</span>
+                  <span className="text-slate-400"> on {o.status}</span>
+                  {o.detail && <div className="text-slate-500">{o.detail}</div>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {cs && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
           <h3 className="text-sm font-semibold text-indigo-900">
@@ -104,7 +152,8 @@ export default function CaseDetail({ caseId, onBack }: { caseId: string; onBack:
       )}
 
       <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
-        {([["findings", `Findings (${findings.length})`],
+        {([["report", "Verification report"],
+           ["findings", `Findings (${findings.length})`],
            ["checks", `Checks (${c.checks?.length ?? 0})`],
            ["submission", "Submitted data"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
@@ -114,6 +163,8 @@ export default function CaseDetail({ caseId, onBack }: { caseId: string; onBack:
           </button>
         ))}
       </div>
+
+      {tab === "report" && <VerificationReport c={c} />}
 
       {tab === "findings" && (
         <div className="space-y-5">

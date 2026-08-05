@@ -124,6 +124,16 @@ class FindingCode(str, Enum):
     DUPLICATE_VENDOR_REGISTRATION = "DUPLICATE_VENDOR_REGISTRATION"
     DUPLICATE_TAX_ID = "DUPLICATE_TAX_ID"
 
+    # --- evidence-first field verification
+    FIELD_CORROBORATED = "FIELD_CORROBORATED"
+    FIELD_CONTRADICTED = "FIELD_CONTRADICTED"
+    FIELD_UNEVIDENCED = "FIELD_UNEVIDENCED"
+
+    # --- profile custom validation
+    CUSTOM_FIELD_INVALID = "CUSTOM_FIELD_INVALID"
+    CUSTOM_RULE_FAILED = "CUSTOM_RULE_FAILED"
+    SEMANTIC_RULE_FLAGGED = "SEMANTIC_RULE_FLAGGED"
+
     # --- clean
     ALL_CHECKS_PASSED = "ALL_CHECKS_PASSED"
 
@@ -224,12 +234,18 @@ class Person(BaseModel):
 
 class VendorSubmission(BaseModel):
     submission_id: Optional[str] = None
+    # Which client Requirement Profile this submission answers. None/"default"
+    # = the country-pack behaviour that predates profiles.
+    profile_id: Optional[str] = None
+    # Values for the profile's custom fields, keyed by FieldSpec.key.
+    custom_fields: dict[str, Any] = Field(default_factory=dict)
     legal_name: str = ""
     trading_name: Optional[str] = None
     country: str = ""                          # ISO-3166 alpha-2, claimed by vendor
     entity_type: Optional[str] = None
-    registration_number: Optional[str] = None
-    tax_id: Optional[str] = None
+    registration_number: Optional[str] = None   # CIN / company number
+    tax_id: Optional[str] = None                # GSTIN / VAT / EIN
+    pan: Optional[str] = None                   # India: PAN
     address_line1: Optional[str] = None
     address_city: Optional[str] = None
     address_postcode: Optional[str] = None

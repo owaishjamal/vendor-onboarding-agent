@@ -34,17 +34,16 @@ def entity_key(sub: VendorSubmission) -> str:
     return f"{sub.country.upper()}:NAME:{name}"
 
 
-def create_case(case_id: str, sub: VendorSubmission, tenant: str = "demo") -> None:
+def create_case(case_id: str, sub: VendorSubmission) -> None:
+    import secrets
     key = entity_key(sub)
+    vendor_token = secrets.token_urlsafe(24)
     with get_conn() as c:
-        # Prior attempts are scoped to the same tenant — one customer's
-        # resubmission must never link to another's case.
         prior = c.execute(
             """SELECT case_id, revision FROM onboarding_case
-                WHERE entity_key = ? AND org_id = ? AND superseded_by IS NULL
-                  AND case_id != ?
+                WHERE entity_key = ? AND superseded_by IS NULL AND case_id != ?
                 ORDER BY created_at DESC, rowid DESC LIMIT 1""",
-            (key, tenant, case_id),
+            (key, case_id),
         ).fetchone()
         revision = (prior["revision"] + 1) if prior else 1
         supersedes = prior["case_id"] if prior else None
@@ -52,11 +51,13 @@ def create_case(case_id: str, sub: VendorSubmission, tenant: str = "demo") -> No
         c.execute(
             """INSERT INTO onboarding_case
                (case_id, legal_name, trading_name, country, contact_email,
-                status, submission, created_at, entity_key, revision, supersedes, org_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                status, submission, created_at, entity_key, revision, supersedes,
+                vendor_token, profile_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (case_id, sub.legal_name, sub.trading_name, sub.country,
              sub.contact_email, "RUNNING", sub.model_dump_json(), _now(),
-             key, revision, supersedes, tenant),
+             key, revision, supersedes, vendor_token,
+             sub.profile_id or "default"),
         )
 
 
@@ -76,7 +77,8 @@ def _blocking_codes(rows) -> set[str]:
 
 
 def complete_case(case_id: str, status: Status, findings: list[Finding],
-                  reviewer_summary: str, vendor_email: Optional[str]) -> None:
+                  reviewer_summary: str, vendor_email: Optional[str],
+                  confidence: Optional[dict] = None) -> None:
     with get_conn() as c:
         for f in findings:
             c.execute(
@@ -116,10 +118,10 @@ def complete_case(case_id: str, status: Status, findings: list[Finding],
         c.execute(
             """UPDATE onboarding_case
                   SET status = ?, reviewer_summary = ?, vendor_email = ?,
-                      completed_at = ?, change_summary = ?
+                      completed_at = ?, change_summary = ?, confidence = ?
                 WHERE case_id = ?""",
             (status.value, reviewer_summary, vendor_email, _now(),
-             change_summary, case_id),
+             change_summary, json.dumps(confidence or {}, default=str), case_id),
         )
 
 
@@ -167,86 +169,6 @@ def record_action(case_id: str, action: str, reviewer: Optional[str],
             "new_status": applied, "resolution": resolution}
 
 
-def override_report() -> dict[str, Any]:
-    """Where reviewers disagree with the automated decision.
-
-    This is the feedback loop the audit log makes possible. An override is a
-    reviewer landing somewhere the checks did not recommend:
-
-      * approved a case the system had held or rejected (the checks were too
-        aggressive, OR the reviewer had outside context), or
-      * rejected a case the system had passed or only queried (the checks
-        missed something).
-
-    Tallying overrides BY CHECK tells you which control is miscalibrated: if the
-    bank-name check is overridden-to-approve ten times a month, it is crying
-    wolf and the threshold wants revisiting. A static system can't tell you
-    that; this turns the resolutions into a live calibration signal.
-    """
-    APPROVE_RES = {"APPROVED"}
-    REJECT_RES = {"REJECTED"}
-
-    with get_conn() as c:
-        # First action per case carries the automated status in prev_status.
-        cases_with_actions = c.execute(
-            """SELECT case_id, MIN(id) AS first_id FROM case_action GROUP BY case_id"""
-        ).fetchall()
-
-        overrides = []
-        by_check: dict[str, int] = {}
-        by_code: dict[str, int] = {}
-        total_resolved = 0
-
-        for row in cases_with_actions:
-            cid = row["case_id"]
-            actions = list_actions(cid)
-            terminal = next((a for a in actions
-                             if a["new_status"] in ("APPROVED_BY_REVIEWER", "REJECTED_BY_REVIEWER")),
-                            None)
-            if not terminal:
-                continue
-            total_resolved += 1
-            automated = terminal["prev_status"]
-            decided = "APPROVED" if terminal["new_status"].startswith("APPROVED") else "REJECTED"
-
-            disagreed = (
-                (decided in APPROVE_RES and automated in ("PENDING_REVIEW", "REJECTED"))
-                or (decided in REJECT_RES and automated in ("APPROVED", "PENDING_INFO", "APPROVED_BY_REVIEWER"))
-            )
-            if not disagreed:
-                continue
-
-            findings = c.execute(
-                """SELECT DISTINCT check_name, code FROM case_finding
-                    WHERE case_id = ? AND severity >= 2""", (cid,)
-            ).fetchall()
-            checks = sorted({f["check_name"] for f in findings})
-            codes = sorted({f["code"] for f in findings})
-            for ck in checks:
-                by_check[ck] = by_check.get(ck, 0) + 1
-            for cd in codes:
-                by_code[cd] = by_code.get(cd, 0) + 1
-
-            case_row = c.execute("SELECT legal_name FROM onboarding_case WHERE case_id = ?",
-                                 (cid,)).fetchone()
-            overrides.append({
-                "case_id": cid, "legal_name": case_row["legal_name"] if case_row else "",
-                "automated": automated, "reviewer_decided": decided,
-                "direction": "approved despite flag" if decided == "APPROVED"
-                             else "rejected despite pass",
-                "checks": checks, "note": terminal["note"], "reviewer": terminal["reviewer"],
-            })
-
-    return {
-        "resolved_cases": total_resolved,
-        "override_count": len(overrides),
-        "override_rate": round(100 * len(overrides) / total_resolved, 1) if total_resolved else 0.0,
-        "by_check": dict(sorted(by_check.items(), key=lambda kv: -kv[1])),
-        "by_code": dict(sorted(by_code.items(), key=lambda kv: -kv[1])),
-        "overrides": overrides,
-    }
-
-
 def list_actions(case_id: str) -> list[dict[str, Any]]:
     with get_conn() as c:
         rows = c.execute(
@@ -255,6 +177,7 @@ def list_actions(case_id: str) -> list[dict[str, Any]]:
     return [{"action": r["action"], "reviewer": r["reviewer"], "note": r["note"],
              "prev_status": r["prev_status"], "new_status": r["new_status"],
              "created_at": r["created_at"]} for r in rows]
+
 
 
 def fail_case(case_id: str, message: str) -> None:
@@ -285,7 +208,79 @@ def _row(r) -> dict[str, Any]:
         "supersedes": _col(r, "supersedes"),
         "superseded_by": _col(r, "superseded_by"),
         "resolution": _col(r, "resolution"),
+        "vendor_token": _col(r, "vendor_token"),
+        "profile_id": _col(r, "profile_id", "default"),
+        "confidence": json.loads(_col(r, "confidence") or "{}"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Vendor-safe view (the vendor portal's ONLY data source)
+# ---------------------------------------------------------------------------
+
+# What the vendor is told per status. Deliberately vague for review/rejection —
+# the same disclosure rule the email gate enforces, applied to the portal.
+_VENDOR_STATUS = {
+    "APPROVED": ("Approved", "Your onboarding is complete. No action needed."),
+    "APPROVED_BY_REVIEWER": ("Approved", "Your onboarding is complete. No action needed."),
+    "PENDING_INFO": ("Action needed", "We need a few things from you — see below."),
+    "PENDING_REVIEW": ("In review", "Your submission is being reviewed. No action needed right now."),
+    "REJECTED": ("Not approved", "We are unable to proceed with this onboarding."),
+    "REJECTED_BY_REVIEWER": ("Not approved", "We are unable to proceed with this onboarding."),
+    "RUNNING": ("Processing", "Your submission is being processed."),
+}
+
+
+def vendor_view(token: str) -> Optional[dict[str, Any]]:
+    """Everything a vendor may see about their own case — and nothing more.
+
+    Serialises ONLY vendor-safe content: the status in vendor language, the
+    NEEDS_INFO vendor_messages (the same set the email gate would send), and
+    the revision chain. Internal findings, screening results, reviewer notes
+    and evidence details are structurally absent — this function cannot leak
+    them because it never selects them.
+    """
+    with get_conn() as c:
+        r = c.execute("SELECT * FROM onboarding_case WHERE vendor_token = ?",
+                      (token,)).fetchone()
+        if not r:
+            return None
+        status = r["status"]
+        label, message = _VENDOR_STATUS.get(status, ("Processing", ""))
+
+        # Only vendor-facing text from NEEDS_INFO findings, and only while the
+        # case is PENDING_INFO — the same two disclosure gates as the email.
+        items: list[str] = []
+        if status == "PENDING_INFO":
+            rows = c.execute(
+                """SELECT DISTINCT vendor_message FROM case_finding
+                    WHERE case_id = ? AND severity = 2 AND vendor_message IS NOT NULL""",
+                (r["case_id"],)).fetchall()
+            items = [x["vendor_message"] for x in rows]
+
+        return {
+            "reference": r["case_id"][:8].upper(),
+            "legal_name": r["legal_name"],
+            "submitted_at": r["created_at"],
+            "status_label": label,
+            "status_message": message,
+            "action_needed": status == "PENDING_INFO",
+            "items": items,
+            "revision": _col(r, "revision", 1),
+            "superseded_by": _col(r, "superseded_by"),
+            "profile_id": _col(r, "profile_id", "default"),
+            "country": r["country"],
+            # The vendor's OWN submitted data — safe to return to them (it is
+            # what they sent us; the secrets are the findings, never included).
+            "submission": json.loads(r["submission"] or "{}"),
+        }
+
+
+def token_case(token: str) -> Optional[dict[str, Any]]:
+    with get_conn() as c:
+        r = c.execute("SELECT case_id FROM onboarding_case WHERE vendor_token = ?",
+                      (token,)).fetchone()
+    return dict(r) if r else None
 
 
 def get_case(case_id: str, full: bool = True) -> Optional[dict[str, Any]]:
@@ -319,16 +314,11 @@ def get_case(case_id: str, full: bool = True) -> Optional[dict[str, Any]]:
     return out
 
 
-def list_cases(limit: int = 200, tenant: Optional[str] = None) -> list[dict[str, Any]]:
+def list_cases(limit: int = 200) -> list[dict[str, Any]]:
     with get_conn() as c:
-        if tenant:
-            rows = c.execute(
-                "SELECT * FROM onboarding_case WHERE org_id = ? "
-                "ORDER BY created_at DESC, rowid DESC LIMIT ?", (tenant, limit)).fetchall()
-        else:
-            rows = c.execute(
-                "SELECT * FROM onboarding_case ORDER BY created_at DESC, rowid DESC LIMIT ?",
-                (limit,)).fetchall()
+        rows = c.execute(
+            "SELECT * FROM onboarding_case ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (limit,)).fetchall()
         out = []
         for r in rows:
             d = _row(r)

@@ -1,0 +1,41 @@
+{
+  "profile_id": "grab-food",
+  "name": "Grab Food Merchants",
+  "version": 1,
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "outlet_count",
+      "label": "Number of outlets",
+      "type": "number",
+      "required": true,
+      "regex": null,
+      "min": 1.0,
+      "max": null,
+      "options": [],
+      "hint": null,
+      "evidence": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "food_license",
+      "label": "Food shop licence",
+      "required": true,
+      "accepted": [],
+      "expects": "A government-issued food licence naming the business",
+      "freshness_months": null
+    }
+  ],
+  "rules": [
+    {
+      "kind": "field_match",
+      "a": "legal_name",
+      "b": "bank.account_name",
+      "mode": "fuzzy",
+      "assert": null,
+      "on_fail": "NEEDS_REVIEW"
+    }
+  ],
+  "thresholds": {}
+}

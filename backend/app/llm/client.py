@@ -131,19 +131,39 @@ class OpenAIClient(LLMClient):
 
 
 class GeminiClient(LLMClient):
+    """Google Gemini via the v1beta REST API — no SDK needed (stdlib urllib).
+
+    Matches the documented endpoint:
+        POST .../models/{model}:generateContent
+        header  X-goog-api-key: <key>
+    Default model is gemini-flash-latest; override with LLM_MODEL.
+    """
+
     provider = "gemini"
+    BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
     def __init__(self) -> None:
-        import google.generativeai as genai
-        genai.configure(api_key=config.GEMINI_API_KEY)
-        self._genai = genai
-        self._model_name = config.LLM_MODEL or "gemini-1.5-flash"
+        if not config.GEMINI_API_KEY:
+            raise RuntimeError("GEMINI_API_KEY is not set")
+        self.api_key = config.GEMINI_API_KEY
+        self.model = config.LLM_MODEL or "gemini-flash-latest"
 
     def _complete(self, system: str, user: str, max_tokens: int) -> str:
-        m = self._genai.GenerativeModel(self._model_name, system_instruction=system)
-        r = m.generate_content(
-            user, generation_config={"max_output_tokens": max_tokens, "temperature": 0})
-        return r.text or ""
+        import urllib.request
+
+        body = {
+            "system_instruction": {"parts": [{"text": system}]},
+            "contents": [{"parts": [{"text": user}]}],
+            "generationConfig": {"temperature": 0, "maxOutputTokens": max_tokens},
+        }
+        req = urllib.request.Request(
+            f"{self.BASE}/{self.model}:generateContent",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "X-goog-api-key": self.api_key},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
 _REGISTRY = {"offline": OfflineClient, "anthropic": AnthropicClient,

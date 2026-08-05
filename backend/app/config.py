@@ -41,6 +41,24 @@ LLM_CACHE_ENABLED = os.getenv("LLM_CACHE_ENABLED", "1") == "1"
 CHECK_DELAY_MS = int(os.getenv("CHECK_DELAY_MS", "400"))
 
 
+# --- branding --------------------------------------------------------------
+APP_TITLE = os.getenv("APP_TITLE", "Zamp")
+APP_SUBTITLE = os.getenv("APP_SUBTITLE", "Vendor Onboarding & Verification")
+
+
+# --- decisioning -----------------------------------------------------------
+#
+# The AI confidence score decides who handles a case:
+#
+#   >= AUTO_DECIDE_CONFIDENCE and clean        -> Auto Approve
+#   >= AUTO_DECIDE_CONFIDENCE and clear fraud  -> Auto Reject
+#   below that, or anything ambiguous          -> Manual Review
+#
+# Set deliberately high: we would rather send a borderline case to a human
+# than auto-decide one we are not sure about.
+AUTO_DECIDE_CONFIDENCE = float(os.getenv("AUTO_DECIDE_CONFIDENCE", "0.85"))
+
+
 # --- document processing ---------------------------------------------------
 
 # How attachments are turned into structured fields:

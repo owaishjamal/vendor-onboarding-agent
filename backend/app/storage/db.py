@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS onboarding_case (
     created_at       TEXT NOT NULL,
     completed_at     TEXT,
     org_id           TEXT NOT NULL DEFAULT 'demo',
+    vendor_token     TEXT,
+    profile_id       TEXT,
+    confidence       TEXT,
     -- Resubmission tracking. entity_key ties a vendor's attempts together;
     -- supersedes points at the prior case this one replaces.
     entity_key       TEXT,
@@ -131,6 +134,9 @@ def init_db() -> None:
             ("supersedes", "TEXT"), ("superseded_by", "TEXT"),
             ("change_summary", "TEXT"), ("resolution", "TEXT"),
             ("org_id", "TEXT NOT NULL DEFAULT 'demo'"),
+            ("vendor_token", "TEXT"),
+            ("profile_id", "TEXT"),
+            ("confidence", "TEXT"),
         ]:
             if name not in cols:
                 c.execute(f"ALTER TABLE onboarding_case ADD COLUMN {name} {ddl}")

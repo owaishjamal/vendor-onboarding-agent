@@ -98,7 +98,36 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, note, reviewer: "reviewer" }),
     }).then(j),
+  profiles: () => fetch("/v1/profiles").then(j),
+  profileTemplates: () => fetch("/v1/profile-templates").then(j),
+  lookups: () => fetch("/v1/lookups").then(j),
+  profile: (id: string, country = "") =>
+    fetch(`/v1/profiles/${encodeURIComponent(id)}?country=${encodeURIComponent(country)}`).then(j),
+  saveProfile: (id: string, body: any) =>
+    fetch(`/v1/profiles/${encodeURIComponent(id)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(j),
+  deleteProfile: (id: string) =>
+    fetch(`/v1/profiles/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j),
+  vendorCase: (token: string) => fetch(`/v1/vendor/${encodeURIComponent(token)}`).then(j),
+  preflight: (file: File, doc_type: string, country: string, legal_name: string) => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    fd.append("doc_type", doc_type);
+    fd.append("country", country);
+    fd.append("legal_name", legal_name);
+    return fetch("/v1/documents/preflight", { method: "POST", body: fd }).then(j);
+  },
 };
+
+export interface Preflight {
+  status: string;
+  level: "ok" | "warn" | "error";
+  message: string;
+  detected_type: string | null;
+  filename: string;
+}
 
 export interface StreamHandlers {
   onPlan?: (p: CheckPlan[]) => void;
@@ -159,11 +188,12 @@ export async function streamCase(
 /** Submit the vendor form: fields as JSON + real uploaded document files. */
 export async function streamForm(
   submission: any, filesByName: Record<string, File>, h: StreamHandlers,
+  endpoint = "/v1/cases/form/stream",
 ): Promise<void> {
   const fd = new FormData();
   fd.append("submission", JSON.stringify(submission));
   for (const f of Object.values(filesByName)) fd.append("files", f, f.name);
-  const res = await fetch("/v1/cases/form/stream", { method: "POST", body: fd });
+  const res = await fetch(endpoint, { method: "POST", body: fd });
   await readSSE(res, h);
 }
 

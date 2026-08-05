@@ -6,9 +6,7 @@ help:
 	@echo "  make api       run the backend on :8001"
 	@echo "  make ui        run the frontend on :5174"
 	@echo "  make test      run the test suite"
-	@echo "  make eval          precision / recall on the 11 golden cases"
-	@echo "  make eval-volume   the same metrics on 250 generated cases (incl. plausible fraud)"
-	@echo "  make calibrate     sweep the screening threshold and show the tradeoff curve"
+	@echo "  make eval          precision / recall on the 11 labelled cases"
 	@echo "  make serve         build UI + serve the whole product on one URL (:8001)"
 	@echo "  make docker        build & run the deployable container (:8000)"
 	@echo "  make reset         clear case history"
@@ -37,11 +35,6 @@ test:
 eval:
 	python scripts/evaluate.py
 
-eval-volume:
-	python scripts/eval_volume.py 250
-
-calibrate:
-	python scripts/calibrate.py screening
 
 # Build the frontend and serve everything from one FastAPI process on :8001 —
 # the same single-URL shape the Docker image / deployed link uses.

@@ -39,9 +39,11 @@ from typing import Any, Iterator, Optional
 
 from backend.app import config
 from backend.app.checks import (
-    completeness, consistency, documents, duplicates, formats, registry, screening,
+    completeness, consistency, custom_rules, documents, duplicates,
+    field_verification, formats, registry, screening,
 )
 from backend.app.llm.client import get_llm
+from backend.app.pipeline import confidence
 from backend.app.models import (
     CaseRecord, CheckResult, Finding, FindingCode, Severity, Status,
     SEVERITY_TO_STATUS, VendorSubmission,
@@ -52,17 +54,37 @@ from backend.app.models import (
 # the live view reads naturally: is it all here, is it well formed, does it
 # agree with itself, does the paperwork back it up, who are these people,
 # have we seen them before.
+# The verification pipeline. Every check is independent — none consumes
+# another's output — and every one runs on every submission, so a vendor is
+# told everything that's wrong in a single response rather than one item per
+# round trip.
 CHECKS = [
     ("completeness", "Completeness", completeness.run),
     ("formats", "Format validation", formats.run),
     ("consistency", "Cross-field consistency", consistency.run),
     ("documents", "Document verification", documents.run),
+    ("field_verification", "Form vs document comparison", field_verification.run),
+    ("custom_rules", "Client rules", custom_rules.run),
     ("registry", "Registry verification", registry.run),
     ("screening", "Denied-party screening", screening.run),
     ("duplicates", "Duplicate & shared-banking check", duplicates.run),
 ]
 
 CHECK_PLAN = [{"check": c, "label": l} for c, l, _ in CHECKS]
+
+
+def _profile_for(sub):
+    """The profile governing this submission (None-safe)."""
+    try:
+        from backend.app.profiles.store import get_profile
+        return get_profile(getattr(sub, "profile_id", None), getattr(sub, "country", "") or "")
+    except Exception:
+        return None
+
+
+def plan_for(sub) -> list[dict[str, str]]:
+    """The check plan the UI renders while a submission is running."""
+    return CHECK_PLAN
 
 
 def _pace() -> None:
@@ -133,7 +155,7 @@ def build_vendor_items(findings: list[Finding], status: Status) -> list[str]:
     return items
 
 
-def assess(sub: VendorSubmission) -> tuple[Status, list[Finding], list[CheckResult]]:
+def assess(sub: VendorSubmission) -> tuple[Status, list[Finding], list[CheckResult], dict]:
     """Run every check and decide, WITHOUT persistence or LLM calls.
 
     This is the pure core of the pipeline. run_pipeline() wraps it with storage
@@ -157,11 +179,17 @@ def assess(sub: VendorSubmission) -> tuple[Status, list[Finding], list[CheckResu
             )
         results.append(result)
         all_findings.extend(result.findings)
-    return decide(all_findings), all_findings, results
+    severity_status = decide(all_findings)
+    conf = confidence.compute(results, all_findings)
+    final, why = confidence.route(severity_status, conf["score"], all_findings,
+                                  config.AUTO_DECIDE_CONFIDENCE)
+    conf["decision_reason"] = why
+    conf["severity_status"] = severity_status.value
+    return final, all_findings, results, conf
 
 
-def run_pipeline(sub: VendorSubmission, case_id: Optional[str] = None,
-                 tenant: str = "demo") -> Iterator[dict[str, Any]]:
+def run_pipeline(sub: VendorSubmission,
+                 case_id: Optional[str] = None) -> Iterator[dict[str, Any]]:
     """Execute all checks, yielding an event per completed check.
 
     Yields:
@@ -171,7 +199,7 @@ def run_pipeline(sub: VendorSubmission, case_id: Optional[str] = None,
     from backend.app.storage import cases as casestore
 
     cid = case_id or uuid.uuid4().hex[:12]
-    casestore.create_case(cid, sub, tenant=tenant)
+    casestore.create_case(cid, sub)
 
     all_findings: list[Finding] = []
     results: list[CheckResult] = []
@@ -204,7 +232,13 @@ def run_pipeline(sub: VendorSubmission, case_id: Optional[str] = None,
             casestore.append_check(cid, seq, result)
             yield {"type": "check", "result": result.model_dump(mode="json")}
 
-        status = decide(all_findings)
+        severity_status = decide(all_findings)
+        conf = confidence.compute(results, all_findings)
+        status, why = confidence.route(severity_status, conf["score"], all_findings,
+                                       config.AUTO_DECIDE_CONFIDENCE)
+        conf["decision_reason"] = why
+        conf["severity_status"] = severity_status.value
+        conf["recommendation"] = confidence.recommendation(status)
 
         if not all_findings:
             all_findings.append(Finding(
@@ -219,6 +253,8 @@ def run_pipeline(sub: VendorSubmission, case_id: Optional[str] = None,
             "country": sub.country,
             "findings": [_finding_dict(f) for f in all_findings],
             "vendor_items": build_vendor_items(all_findings, status),
+            "confidence": conf["score"],
+            "decision_reason": why,
             "suppressed_vendor_items": (
                 # Recorded so a reviewer can see what WOULD have been asked for
                 # once the internal question is resolved. Visible internally,
@@ -235,7 +271,8 @@ def run_pipeline(sub: VendorSubmission, case_id: Optional[str] = None,
         summary, _ = llm.reviewer_summary(payload)
 
         casestore.complete_case(cid, status=status, findings=all_findings,
-                                reviewer_summary=summary, vendor_email=email or None)
+                                reviewer_summary=summary, vendor_email=email or None,
+                                confidence=conf)
 
         yield {"type": "done", "case": casestore.get_case(cid)}
 
