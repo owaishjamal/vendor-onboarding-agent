@@ -66,10 +66,19 @@ def preflight(file_bytes: bytes, filename: str, doc_type: str,
                         f"needed here.",
                         detected=detected, filename=filename, reasons=reasons)
 
-    if accepted and detected is None:
+    # Not recognising the document is never grounds for approving it.
+    #
+    # This check used to be gated on `accepted` being populated. Every document
+    # a category profile adds — identity proof, insurance, trade licences —
+    # declares no accepted list, so the gate never fired and the file fell
+    # through to "Looks like a valid X". A cover letter dropped into the photo
+    # ID slot came back with a green tick. The absence of an expected-types
+    # list means we cannot check the type, which is the opposite of the type
+    # being fine.
+    if detected is None:
         return _verdict("UNCONFIRMED", "warn",
-                        f"We couldn't confirm this is a {label}. Double-check you attached "
-                        f"the right document.",
+                        f"We couldn't confirm this is a {label}. Check you attached the "
+                        f"right file — a reviewer will look at it either way.",
                         detected=None, filename=filename, reasons=reasons)
 
     # Optional name cross-check (skip bank docs — they name the account holder).

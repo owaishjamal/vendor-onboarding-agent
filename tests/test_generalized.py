@@ -455,3 +455,63 @@ def test_which_checks_failed_still_routes_to_the_checks_intent():
     """The new 'flagged' pattern must not swallow more specific questions."""
     case = _case("VS-03_kessler_bank_mismatch.json")
     assert "checks raised" in ops_copilot.answer(case, "which checks failed?")
+
+
+# ===========================================================================
+# Preflight must never endorse a document it did not recognise
+# ===========================================================================
+
+def _pdf_bytes(lines):
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    b = io.BytesIO(); c = canvas.Canvas(b, pagesize=A4); y = 800
+    for line in lines:
+        c.drawString(60, y, line); y -= 18
+    c.showPage(); c.save()
+    return b.getvalue()
+
+
+COVER_LETTER = ["Cover Letter", "Dear Sir/Madam,",
+                "I am writing to express my interest in the position.",
+                "Thank you for your consideration.", "Sincerely, Ayesha"]
+
+
+def test_an_unrecognised_document_is_never_called_valid():
+    """Category documents declare no accepted-types list, which meant the type
+    checks were skipped entirely and ANY file came back "Looks like a valid X"
+    with a green tick. Not recognising a document is not the same as the
+    document being right."""
+    from backend.app.dva.preflight import preflight
+    r = preflight(_pdf_bytes(["Some entirely unremarkable page of text."]),
+                  "mystery.pdf", "identity_proof", set(), None)
+    assert r["level"] != "ok", f"unrecognised file was endorsed: {r['message']}"
+    assert "valid identity proof" not in r["message"].lower()
+
+
+def test_a_cover_letter_is_rejected_from_the_photo_id_slot():
+    from backend.app.dva.preflight import preflight
+    r = preflight(_pdf_bytes(COVER_LETTER), "Cover Letter.pdf",
+                  "identity_proof", set(), "Ayesha Khan")
+    assert r["level"] == "error"
+    assert "letter" in r["message"].lower()
+
+
+def test_a_real_identity_document_is_recognised():
+    """The counterweight: warning on everything is as useless as approving
+    everything, because a reviewer learns to ignore it."""
+    from backend.app.dva.preflight import preflight
+    r = preflight(_pdf_bytes(["REPUBLIC OF INDIA", "PASSPORT",
+                              "Name: Ayesha Khan", "Date of Birth: 1991-04-02",
+                              "Nationality: Indian"]),
+                  "passport.pdf", "identity_proof", set(), "Ayesha Khan")
+    assert r["level"] == "ok", r["message"]
+    assert r["detected_type"] == "identity_proof"
+
+
+def test_seeding_composes_offline_even_when_a_provider_is_configured():
+    """Eleven seeded cases meant twenty-two model calls before the port
+    opened — a free-tier quota gone and a two-minute startup."""
+    import inspect
+    from backend.app.api import app as api
+    assert "compose_offline=True" in inspect.getsource(api._seed_demo_cases)

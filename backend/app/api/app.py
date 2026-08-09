@@ -72,7 +72,11 @@ def _seed_demo_cases() -> None:
                 continue
             try:
                 sub = VendorSubmission(**json.loads(path.read_text()))
-                run_pipeline(sub)
+                # Compose the prose offline. Eleven cases at boot meant
+                # twenty-two model calls before the port opened — enough to
+                # exhaust a free-tier quota and stall startup past the
+                # platform's port scan.
+                run_pipeline(sub, compose_offline=True)
                 seeded += 1
             except Exception as exc:          # one bad fixture must not block boot
                 log.warning("demo seed skipped %s: %s", entry.get("file"), exc)

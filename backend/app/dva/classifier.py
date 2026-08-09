@@ -72,6 +72,34 @@ TYPE_SIGNALS: dict[str, list[tuple[str, float]]] = {
     "tax_form": [
         (r"tax certificate|tax registration", 3),
     ],
+    # --- document types the category profiles ask for. Without these every
+    # one of them came back unrecognised, which is a warning on every upload
+    # and trains a reviewer to ignore warnings.
+    "identity_proof": [
+        (r"\bpassport\b", 3), (r"driving licen[cs]e|driver'?s licen[cs]e", 3),
+        (r"\baadhaar\b|unique identification authority", 4),
+        (r"voter (id|identity)|election commission", 3),
+        (r"date of birth|\bdob\b", 1), (r"nationality", 1),
+        (r"republic of|government of", 1),
+    ],
+    "insurance_certificate": [
+        (r"certificate of insurance|insurance certificate", 4),
+        (r"\bpolicy (number|no)\b", 3), (r"\binsured\b", 2),
+        (r"goods in transit|public liability|professional indemnity", 3),
+        (r"workers'? compensation|employer'?s liability", 3),
+        (r"sum insured|period of insurance", 2),
+    ],
+    "licence": [
+        (r"\blicen[cs]e (number|no)\b", 3),
+        (r"contractor.{0,12}licen[cs]e|trade licen[cs]e", 4),
+        (r"carrier licen[cs]e|transport (operator|licen[cs]e)", 4),
+        (r"valid (until|upto|till)|licen[cs]e expiry", 2),
+        (r"issuing authority|municipal corporation", 2),
+    ],
+    "msme_certificate": [
+        (r"\budyam\b", 4), (r"\bmsme\b|micro,? small", 3),
+        (r"ministry of micro", 3),
+    ],
 }
 
 # Signals that a document is NOT a business onboarding document at all. If one
@@ -93,7 +121,13 @@ IRRELEVANT_SIGNALS: dict[str, list[tuple[str, float]]] = {
         (r"delivery note|despatch|dispatch note|packing (slip|list)", 3),
     ],
     "personal letter / other": [
-        (r"dear (sir|madam)", 1),
+        # A cover letter is the document most likely to be attached by mistake
+        # alongside a CV, and it was sailing through unrecognised.
+        (r"cover letter", 3),
+        (r"dear (sir|madam|hiring)", 2),
+        (r"i am writing to (express|apply)", 3),
+        (r"(yours )?(sincerely|faithfully)|thank you for your consideration", 2),
+        (r"please find (attached|enclosed) my", 3),
     ],
 }
 

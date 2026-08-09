@@ -42,6 +42,7 @@ from backend.app.checks import (
     completeness, consistency, custom_rules, documents, duplicates,
     field_verification, formats, registry, screening,
 )
+from backend.app.llm import offline as offline_composer
 from backend.app.llm.client import get_llm
 from backend.app.pipeline import confidence
 from backend.app.models import (
@@ -221,7 +222,8 @@ import json
 
 def run_pipeline(sub: VendorSubmission,
                  case_id: Optional[str] = None,
-                 local_queue: Optional[Any] = None) -> None:
+                 local_queue: Optional[Any] = None,
+                 compose_offline: bool = False) -> None:
     """Execute all checks, persist the case, publish an event per stage.
 
     Runs in-process. At onboarding volumes the whole pipeline takes well under
@@ -304,9 +306,18 @@ def run_pipeline(sub: VendorSubmission,
         }
 
         _pace()
-        llm = get_llm()
-        email, _ = llm.draft_vendor_email(payload)
-        summary, _ = llm.reviewer_summary(payload)
+        # Seeding runs eleven cases at boot. Sending twenty-two model calls
+        # before the port is even open exhausted the free-tier quota, blocked
+        # startup for two minutes, and left every one of them falling back to
+        # the template anyway. Seeded prose is composed offline; a real
+        # submission still gets the model.
+        if compose_offline:
+            email = offline_composer.draft_vendor_email(payload)
+            summary = offline_composer.reviewer_summary(payload)
+        else:
+            llm = get_llm()
+            email, _ = llm.draft_vendor_email(payload)
+            summary, _ = llm.reviewer_summary(payload)
 
         casestore.complete_case(cid, status=status, findings=all_findings,
                                 reviewer_summary=summary, vendor_email=email or None,
