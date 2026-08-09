@@ -58,19 +58,39 @@ from backend.app.models import (
 # another's output — and every one runs on every submission, so a vendor is
 # told everything that's wrong in a single response rather than one item per
 # round trip.
+# Every check declares HOW it decides. This is not cosmetic: it is the
+# contract that keeps the two kinds of reasoning apart.
+#
+#   deterministic — regex, checksum, set comparison, registry lookup. Same
+#                   input, same answer, every time. Testable to the character.
+#                   These need no model and must never call one.
+#   ai            — reads unstructured content or makes a judgement call
+#                   (is this document what it claims to be? does this business
+#                   description match the category?). Produces a finding with
+#                   confidence and evidence, and is never the sole basis for
+#                   an approval.
+#
+# An ops reviewer reading the report needs to know which is which, because
+# "the IBAN checksum failed" and "the model thinks this looks like a resume"
+# warrant completely different levels of trust.
+DETERMINISTIC = "deterministic"
+AI = "ai"
+
 CHECKS = [
-    ("completeness", "Completeness", completeness.run),
-    ("formats", "Format validation", formats.run),
-    ("consistency", "Cross-field consistency", consistency.run),
-    ("documents", "Document verification", documents.run),
-    ("field_verification", "Form vs document comparison", field_verification.run),
-    ("custom_rules", "Client rules", custom_rules.run),
-    ("registry", "Registry verification", registry.run),
-    ("screening", "Denied-party screening", screening.run),
-    ("duplicates", "Duplicate & shared-banking check", duplicates.run),
+    ("completeness", "Completeness", completeness.run, DETERMINISTIC),
+    ("formats", "Format validation", formats.run, DETERMINISTIC),
+    ("consistency", "Cross-field consistency", consistency.run, DETERMINISTIC),
+    ("documents", "Document verification", documents.run, AI),
+    ("field_verification", "Form vs document comparison", field_verification.run, AI),
+    ("custom_rules", "Client rules", custom_rules.run, DETERMINISTIC),
+    ("registry", "Registry verification", registry.run, DETERMINISTIC),
+    ("screening", "Denied-party screening", screening.run, DETERMINISTIC),
+    ("duplicates", "Duplicate & shared-banking check", duplicates.run, DETERMINISTIC),
 ]
 
-CHECK_PLAN = [{"check": c, "label": l} for c, l, _ in CHECKS]
+CHECK_PLAN = [{"check": c, "label": l, "kind": k} for c, l, _, k in CHECKS]
+
+CHECK_KIND = {c: k for c, l, _, k in CHECKS}
 
 
 def _profile_for(sub):
@@ -140,13 +160,22 @@ def build_vendor_items(findings: list[Finding], status: Status) -> list[str]:
         to one by mistake. The rule lives here, in one place, rather than
         depending on every check author remembering it.
     """
-    if status is not Status.PENDING_INFO:
+    # APPROVED_WITH_CONDITIONS is the second status that may speak to the
+    # vendor, and it is safe for the same reason PENDING_INFO is: a condition
+    # is a paperwork item we have already decided not to block on. It tips off
+    # nobody, because we are telling them they are onboarded.
+    if status not in (Status.PENDING_INFO, Status.APPROVED_WITH_CONDITIONS):
         return []
+
+    disclosable = (
+        {Severity.NEEDS_INFO} if status is Status.PENDING_INFO
+        else {Severity.CONDITION}
+    )
 
     seen: set[str] = set()
     items: list[str] = []
     for f in findings:
-        if f.severity is not Severity.NEEDS_INFO:
+        if f.severity not in disclosable:
             continue
         msg = (f.vendor_message or "").strip()
         if msg and msg not in seen:
@@ -165,7 +194,7 @@ def assess(sub: VendorSubmission) -> tuple[Status, list[Finding], list[CheckResu
     """
     all_findings: list[Finding] = []
     results: list[CheckResult] = []
-    for name, label, fn in CHECKS:
+    for name, label, fn, kind in CHECKS:
         try:
             result = fn(sub)
         except Exception as exc:  # a broken check escalates, never approves
@@ -188,34 +217,45 @@ def assess(sub: VendorSubmission) -> tuple[Status, list[Finding], list[CheckResu
     return final, all_findings, results, conf
 
 
-def run_pipeline(sub: VendorSubmission,
-                 case_id: Optional[str] = None) -> Iterator[dict[str, Any]]:
-    """Execute all checks, yielding an event per completed check.
+import json
 
-    Yields:
-        {"type": "check", "result": CheckResult-as-dict}
-        {"type": "done",  "case": {...}}
+def run_pipeline(sub: VendorSubmission,
+                 case_id: Optional[str] = None,
+                 local_queue: Optional[Any] = None) -> None:
+    """Execute all checks, persist the case, publish an event per stage.
+
+    Runs in-process. At onboarding volumes the whole pipeline takes well under
+    a second, so there is no worker, no broker and nothing to provision — the
+    app is one Python process and a SQLite file. Pass `local_queue` to receive
+    the stage events; omit it to run headless (seeding, evaluation, tests).
     """
     from backend.app.storage import cases as casestore
 
     cid = case_id or uuid.uuid4().hex[:12]
     casestore.create_case(cid, sub)
+    
+    def emit(event: dict) -> None:
+        """Publish one event to whoever is watching, if anyone is.
+
+        A run is never *driven* by its listener — the pipeline completes and
+        persists whether or not a browser is attached. That is what makes a
+        dropped connection a cosmetic problem rather than a lost case.
+        """
+        if local_queue is not None:
+            local_queue.put(event)
 
     all_findings: list[Finding] = []
     results: list[CheckResult] = []
     seq = 0
 
     try:
-        for name, label, fn in CHECKS:
+        for name, label, fn, kind in CHECKS:
             _pace()
             try:
                 result = fn(sub)
             except Exception as exc:
-                # A check that crashes must not silently vanish. It becomes a
-                # NEEDS_REVIEW finding, because "we could not run this control"
-                # is never grounds for approval.
                 result = CheckResult(
-                    check=name, label=label,
+                    check=name, label=label, kind=kind,
                     summary=f"Check failed to run: {type(exc).__name__}: {exc}",
                     findings=[Finding(
                         code=FindingCode.MISSING_REQUIRED_FIELD,
@@ -226,11 +266,12 @@ def run_pipeline(sub: VendorSubmission,
                     )],
                 )
 
+            result.kind = kind
             results.append(result)
             all_findings.extend(result.findings)
             seq += 1
             casestore.append_check(cid, seq, result)
-            yield {"type": "check", "result": result.model_dump(mode="json")}
+            emit({"type": "check", "result": result.model_dump(mode="json")})
 
         severity_status = decide(all_findings)
         conf = confidence.compute(results, all_findings)
@@ -256,9 +297,6 @@ def run_pipeline(sub: VendorSubmission,
             "confidence": conf["score"],
             "decision_reason": why,
             "suppressed_vendor_items": (
-                # Recorded so a reviewer can see what WOULD have been asked for
-                # once the internal question is resolved. Visible internally,
-                # never sent.
                 [f.vendor_message for f in all_findings
                  if f.severity is Severity.NEEDS_INFO and f.vendor_message]
                 if status is not Status.PENDING_INFO else []
@@ -274,8 +312,24 @@ def run_pipeline(sub: VendorSubmission,
                                 reviewer_summary=summary, vendor_email=email or None,
                                 confidence=conf)
 
-        yield {"type": "done", "case": casestore.get_case(cid)}
+        final_case = casestore.get_case(cid)
+        if final_case is not None:
+            # What the vendor is being asked for, alongside the case. Derived
+            # from the same disclosure gate that built the email, so the two
+            # can never disagree.
+            final_case["vendor_items"] = payload["vendor_items"]
+            final_case["conditions"] = confidence.conditions_for(all_findings)
+        emit({"type": "done", "case": final_case})
+        return cid
 
-    except Exception as exc:  # pragma: no cover - defensive
+    except BaseException as exc:
+        # BaseException, not Exception: a worker being shut down mid-job raises
+        # SystemExit/KeyboardInterrupt, and a case left at RUNNING forever is a
+        # row no one can ever action. Record the truth, tell any listener, and
+        # let the exception continue.
         casestore.fail_case(cid, f"{type(exc).__name__}: {exc}")
-        yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
+        emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+        if not isinstance(exc, Exception):      # pragma: no cover - shutdown path
+            raise
+        return cid
+

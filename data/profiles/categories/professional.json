@@ -1,0 +1,88 @@
+{
+  "profile_id": "category-professional",
+  "name": "Professional / Individual",
+  "version": 1,
+  "description": "Freelancers, independent professionals and specialists. Deliberately the lightest set: an individual has no incorporation certificate, and demanding one is the single most common reason good freelancers abandon onboarding.",
+  "category": "professional",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "profession",
+      "label": "Profession / specialisation",
+      "type": "text",
+      "requirement": "required",
+      "why": "We verify this against any professional registration you hold.",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "engagement_basis",
+      "label": "Engagement basis",
+      "type": "select",
+      "requirement": "required",
+      "why": "Sets how we process your invoices.",
+      "options": [
+        "Hourly",
+        "Daily",
+        "Per project",
+        "Retainer"
+      ],
+      "validation_source": []
+    },
+    {
+      "key": "professional_body",
+      "label": "Professional body registration",
+      "type": "text",
+      "requirement": "conditional",
+      "when": "profession is present",
+      "why": "Regulated professions (medical, legal, audit, engineering) require a current registration.",
+      "options": [],
+      "validation_source": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "incorporation",
+      "label": "Certificate of incorporation",
+      "requirement": "na",
+      "accepted": [],
+      "why": "Not applicable — an individual professional is not an incorporated entity. Your government ID stands in as proof of identity."
+    },
+    {
+      "key": "tax_form",
+      "label": "Tax registration certificate",
+      "requirement": "conditional",
+      "when": "tax_id is present",
+      "accepted": [],
+      "why": "Only if you are registered for tax. Many independent professionals fall below the registration threshold, and we do not require it of them.",
+      "expects": "A tax registration certificate naming the individual or their practice"
+    },
+    {
+      "key": "identity_proof",
+      "label": "Government photo ID",
+      "requirement": "required",
+      "why": "For an individual vendor this replaces the certificate of incorporation as proof of identity.",
+      "expects": "A government-issued photo identity document",
+      "accepted": []
+    },
+    {
+      "key": "professional_certificate",
+      "label": "Professional certification / licence",
+      "requirement": "conditional",
+      "when": "professional_body is present",
+      "why": "Confirms the professional registration you provided is current.",
+      "expects": "A professional body certificate or practising licence naming the individual",
+      "accepted": []
+    },
+    {
+      "key": "portfolio",
+      "label": "Portfolio / work samples",
+      "requirement": "optional",
+      "why": "Optional. Helps the requesting team evaluate fit; never used in the compliance decision.",
+      "expects": "Any document evidencing prior work",
+      "accepted": []
+    }
+  ],
+  "rules": [],
+  "thresholds": {}
+}

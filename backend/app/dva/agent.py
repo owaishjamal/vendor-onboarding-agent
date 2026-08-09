@@ -20,6 +20,8 @@ either way, which is the point of keeping it separate from extraction.
 
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
@@ -28,6 +30,11 @@ from backend.app.checks.base import name_score, name_verdict
 from backend.app.checks.document_reader import MIN_READ_CONFIDENCE, read_document
 from backend.app.dva.classifier import classify_text
 from backend.app.models import Finding, FindingCode, Severity
+
+# A document valid today but expiring within this window is onboarded with a
+# condition rather than blocked. Two months is long enough for a vendor to
+# renew through a normal issuing process without stalling the engagement.
+EXPIRING_SOON_DAYS = int(os.getenv("EXPIRING_SOON_DAYS", "60"))
 
 
 # What each finding means for the document's own verdict.
@@ -220,6 +227,19 @@ def verify(doc, sub, accepted: set[str], *, freshness_required: set[str],
             f"{doc.doc_type} expired on {expires}.", f"documents.{doc.doc_type}",
             vendor_message=f"The {slot_label} you provided expired on {expires}. Please send a current one.",
             expiry_date=str(expires)))
+    elif expires and (expires - today).days <= EXPIRING_SOON_DAYS:
+        # Valid today, expires shortly. Blocking onboarding over this is how
+        # procurement gets bypassed; ignoring it is how a vendor ends up
+        # transacting on a lapsed licence. It becomes a CONDITION: onboard
+        # now, with the renewal recorded against the vendor and chased.
+        v.findings.append(_f(
+            FindingCode.DOCUMENT_EXPIRING_SOON, Severity.CONDITION, check,
+            f"{doc.doc_type} is valid but expires on {expires} "
+            f"({(expires - today).days} days).",
+            f"documents.{doc.doc_type}",
+            vendor_message=(f"Your {slot_label} expires on {expires}. You are onboarded, "
+                            f"but please send a renewed copy before that date."),
+            expiry_date=str(expires), days_remaining=(expires - today).days))
     elif issued and doc.doc_type in freshness_required and _months_between(issued, today) > max_age_months:
         v.status = v.status if v.status == DocStatus.NEEDS_REVIEW else DocStatus.NEEDS_INFO
         v.findings.append(_f(

@@ -20,6 +20,19 @@ FieldType = Literal[
     "id", "iban", "aba", "select", "url", "currency", "textarea",
 ]
 
+# How badly we need a thing.
+#
+#   required     — always. Absence is a NEEDS_INFO finding.
+#   conditional  — required only when `when` evaluates true against the
+#                  submission. A GST certificate matters for an Indian company
+#                  and is meaningless for a UK sole trader; asking everyone for
+#                  everything is how onboarding forms become 40 fields long.
+#   optional     — accepted and verified if supplied, never chased.
+#   na           — explicitly not applicable; shown as such so an ops reviewer
+#                  can see the requirement was considered and dismissed, not
+#                  forgotten.
+Requirement = Literal["required", "conditional", "optional", "na"]
+
 
 
 class FieldSpec(BaseModel):
@@ -27,6 +40,17 @@ class FieldSpec(BaseModel):
     label: str
     type: FieldType = "text"
     required: bool = False
+    # Richer than `required`, which stays as the legacy boolean so existing
+    # profiles keep loading. When `requirement` is left unset it is derived
+    # from `required` by the validator below.
+    requirement: Optional[Requirement] = None
+    # Expression deciding whether a `conditional` item applies to this
+    # submission, e.g. "country == 'IN'" or "entity_type != 'individual'".
+    when: Optional[str] = None
+    # Shown to the vendor next to the field. The brief asks the agent to
+    # explain WHY something is needed — this is where that text lives, as
+    # data, so it can differ per client without a code change.
+    why: Optional[str] = None
     regex: Optional[str] = None          # for type=id / text
     min: Optional[float] = None          # for type=number / currency
     max: Optional[float] = None
@@ -49,15 +73,46 @@ class FieldSpec(BaseModel):
     def evidence(self) -> list[str]:      # back-compat for existing callers
         return self.validation_source
 
+    @model_validator(mode="after")
+    def _derive_requirement(self) -> "FieldSpec":
+        return _sync_requirement(self)
+
+
+def _sync_requirement(spec):
+    """Keep the legacy `required` bool and the richer `requirement` in step.
+
+    Old profiles on disk only carry `required`. New ones may carry only
+    `requirement`. Both must round-trip, and every consumer should be able to
+    read either without caring which was authored.
+    """
+    if spec.requirement is None:
+        spec.requirement = "required" if spec.required else "optional"
+    else:
+        spec.required = spec.requirement == "required"
+    if spec.requirement == "conditional" and not spec.when:
+        # A conditional with no condition can never be evaluated. Treating it
+        # as optional is the safe reading: we never chase a vendor for
+        # something whose applicability we cannot determine.
+        spec.requirement = "optional"
+        spec.required = False
+    return spec
+
 
 class DocSpec(BaseModel):
-    key: str                              # slot key, e.g. "food_license"
+    key: str                              # slot key, e.g. "insurance_certificate"
     label: str
     required: bool = True
+    requirement: Optional[Requirement] = None   # see FieldSpec.requirement
+    when: Optional[str] = None                  # for requirement="conditional"
+    why: Optional[str] = None                   # why we ask for it
     accepted: list[str] = Field(default_factory=list)
     # Plain-English description for documents the classifier doesn't know.
     expects: Optional[str] = None
     freshness_months: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _derive_requirement(self) -> "DocSpec":
+        return _sync_requirement(self)
 
 
 class RuleSpec(BaseModel):
@@ -77,6 +132,10 @@ class RequirementProfile(BaseModel):
     name: str
     version: int = 1
     description: Optional[str] = None
+    # Set on category profiles (data/profiles/categories/*.json). A client
+    # profile leaves this null and applies on top of whatever category the
+    # vendor picked.
+    category: Optional[str] = None
     extends: Literal["country_defaults", "blank"] = "country_defaults"
     fields: list[FieldSpec] = Field(default_factory=list)
     documents: list[DocSpec] = Field(default_factory=list)

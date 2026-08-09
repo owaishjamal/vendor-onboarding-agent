@@ -62,8 +62,37 @@ class ComplyAdvantageProvider:
         return self._seed.candidates()
 
 
+class HttpScreeningAdapter:
+    """A generic HTTP JSON API adapter for denied-party lists."""
+    source = "http_screening"
+
+    def __init__(self, endpoint: str, api_key: str):
+        self.endpoint = endpoint
+        self.api_key = api_key
+
+    def candidates(self) -> list[DeniedParty]:
+        import urllib.request
+        
+        req = urllib.request.Request(self.endpoint)
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode())
+                return [DeniedParty(**d) for d in data]
+        except Exception as exc:
+            import logging
+            logging.getLogger("vo.screening").warning("HTTP screening fetch failed: %s", exc)
+            return []
+
+
 def get_screening_provider() -> ScreeningProvider:
     which = os.getenv("SCREENING_PROVIDER", "seed").lower()
     if which == "complyadvantage":
         return ComplyAdvantageProvider(os.getenv("COMPLYADVANTAGE_API_KEY", ""))
+    elif which == "http":
+        endpoint = os.getenv("SCREENING_ENDPOINT", "")
+        key = os.getenv("SCREENING_API_KEY", "")
+        if endpoint:
+            return HttpScreeningAdapter(endpoint, key)
     return SeedScreeningProvider()

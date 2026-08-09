@@ -1,14 +1,263 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
-body {
-  @apply bg-slate-50 text-slate-900 antialiased;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+/* ---------------------------------------------------------------------------
+   Zamp design tokens.
+
+   Kept as CSS variables alongside the Tailwind scale so both addressing styles
+   work: `bg-surface-100` and `var(--color-surface-gray)` resolve to the same
+   value. Nothing that referenced the previous tokens has been removed — the
+   scale keys are unchanged, only the values moved to the Zamp palette.
+   --------------------------------------------------------------------------- */
+:root {
+  --color-black: #000000;
+  --color-surface-gray: #efefef;
+  --color-white: #ffffff;
+  --color-dark-charcoal: #302f37;
+  --color-near-black: #1e1e1e;
+  --color-warm-off-white: #f5f5f5;
+  --color-zamp-blue: #005eff;
+  --color-warm-cream-border: #e7e2df;
+  --color-light-warm-gray: #f0edea;
+
+  --spacing-space-1: 4px;   --spacing-space-2: 8px;   --spacing-space-3: 12px;
+  --spacing-space-4: 16px;  --spacing-space-5: 20px;  --spacing-space-6: 24px;
+  --spacing-space-7: 28px;  --spacing-space-8: 32px;  --spacing-space-9: 36px;
+  --spacing-space-10: 40px; --spacing-space-12: 48px; --spacing-space-18: 72px;
+  --spacing-space-24: 96px; --spacing-space-32: 128px; --spacing-space-45: 180px;
+
+  --radius-radius-sm: 4px;   --radius-radius-md: 6px;   --radius-radius-base: 10px;
+  --radius-radius-card: 12px; --radius-radius-lg: 15px; --radius-radius-xl: 16px;
+  --radius-radius-2xl: 20px;  --radius-radius-pill: 9999px;
+
+  --font-geist: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono: "Geist Mono", ui-monospace, monospace;
+  --font-ui-sans-serif: ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Thin scrollbars inside data panels so long traces don't look heavy. */
-.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-.scroll-thin::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; }
-.scroll-thin::-webkit-scrollbar-track { background: transparent; }
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-family: var(--font-geist);
+    color: var(--color-black);
+    /* Flat surface, no decorative gradient. Hierarchy comes from scale
+       contrast and spacing, not from background effects. */
+    background-color: var(--color-surface-gray);
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  /* Editorial headings: tight tracking, heavy scale contrast. */
+  h1, h2, h3 {
+    font-family: var(--font-geist);
+    letter-spacing: -0.04em;
+  }
+  /* Visible focus everywhere, per the validated interaction evidence. */
+  :focus-visible {
+    outline: 3px solid var(--color-black);
+    outline-offset: 0px;
+  }
+  ::selection {
+    background-color: var(--color-black);
+    color: var(--color-white);
+  }
+}
+
+@layer components {
+  .card {
+    /* 12px = the Zamp radius-card token. Written as an arbitrary value rather
+       than a config key so it compiles regardless of whether the dev server
+       has picked up a tailwind.config.js change. */
+    @apply rounded-[12px] bg-white border border-surface-200;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition;
+  }
+  .btn-primary {
+    @apply btn bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply btn bg-white border border-surface-300 text-surface-900 hover:bg-surface-50 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-dark {
+    @apply btn bg-accent-500 hover:bg-accent-900 text-white;
+  }
+  .btn-danger {
+    @apply btn bg-danger-500 hover:bg-danger-700 text-white disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .activity-row {
+    @apply font-mono text-xs leading-relaxed;
+  }
+  .input {
+    @apply rounded-xl bg-white border border-surface-300 px-3 py-2 text-sm text-surface-900 placeholder-surface-500 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20;
+  }
+
+  /* ---------- Premium design system (used by landing + vendor shell) ---------- */
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/40 shadow-elevated;
+  }
+  .glass-dark {
+    background: linear-gradient(180deg, rgba(20, 24, 33, 0.85), rgba(11, 15, 22, 0.92));
+    @apply backdrop-blur-xl border border-white/10 shadow-elevated text-white;
+  }
+  .gradient-text {
+    background: linear-gradient(120deg, #000000 0%, #302f37 60%, #1e1e1e 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .gradient-text-light {
+    background: linear-gradient(120deg, #ffffff 0%, #f0edea 60%, #e7e2df 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .btn-hero {
+    @apply btn px-5 py-3 text-base font-semibold rounded-[9999px];
+    background: var(--color-zamp-blue);
+    color: white;
+    box-shadow: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .btn-hero:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 14px 34px -10px rgba(0, 0, 0, 0.65),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  .btn-ghost-light {
+    @apply btn px-5 py-3 text-base font-semibold rounded-2xl border border-white/20 text-white;
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(10px);
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .btn-ghost-light:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+  /* Flat by design: hierarchy comes from the border and the surface change,
+     not from a drop shadow. */
+  .premium-card {
+    @apply rounded-[20px] border border-surface-200 bg-white;
+  }
+  .premium-card-dark {
+    @apply rounded-[20px] border border-white/10 text-white;
+    background: #1e1e1e;
+  }
+  .ring-brand-glow {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  }
+  .hero-mesh {
+    background: #000000;
+  }
+  .section-soft {
+    background: var(--color-warm-off-white);
+  }
+  .stat-tile {
+    @apply premium-card p-5;
+  }
+  .nav-pill {
+    @apply inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-surface-700 hover:bg-surface-100 transition;
+  }
+  /* `.nav-pill` carries `hover:bg-surface-100`. On the ACTIVE pill that hover
+     lightened the background while the text stayed white, so the label
+     disappeared under the cursor. The active state has to win on hover. */
+  .nav-pill-active,
+  .nav-pill-active:hover {
+    @apply bg-black text-white;
+  }
+  .nav-pill-active:hover {
+    @apply opacity-90;
+  }
+  .marquee-fade {
+    mask-image: linear-gradient(90deg, transparent 0%, black 8%, black 92%, transparent 100%);
+  }
+}
+
+@layer utilities {
+  /* Reveal on mount — used by the landing page sections. */
+  .reveal-on-mount {
+    opacity: 0;
+    transform: translateY(20px);
+    animation: reveal-up 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .reveal-delay-1 { animation-delay: 0.1s; }
+  .reveal-delay-2 { animation-delay: 0.2s; }
+  .reveal-delay-3 { animation-delay: 0.35s; }
+  .reveal-delay-4 { animation-delay: 0.5s; }
+  .reveal-delay-5 { animation-delay: 0.7s; }
+
+  @keyframes reveal-up {
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .float-soft {
+    animation: float-soft 6s ease-in-out infinite;
+  }
+  @keyframes float-soft {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+  }
+
+  .pulse-ring {
+    animation: pulse-ring 2.2s ease-out infinite;
+  }
+  @keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.55); }
+    70% { box-shadow: 0 0 0 14px rgba(0, 0, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+  }
+
+  .scroll-x-snap {
+    scroll-snap-type: x mandatory;
+  }
+  .snap-card {
+    scroll-snap-align: start;
+  }
+
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.35) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2.8s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  .glow-drift {
+    animation: glow-drift 8s ease-in-out infinite;
+  }
+  @keyframes glow-drift {
+    0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.55; }
+    50% { transform: translate(12px, -8px) scale(1.05); opacity: 0.75; }
+  }
+
+  .btn-press {
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+  }
+  .btn-press:active {
+    transform: scale(0.97);
+  }
+}

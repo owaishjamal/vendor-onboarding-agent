@@ -3,8 +3,12 @@
 # Push this repo to GitHub, then in Render: New → Blueprint → pick the repo.
 # Render reads this file, builds the Dockerfile, and gives you a public URL.
 #
-# To use a real LLM instead of the offline composer, add ANTHROPIC_API_KEY in
-# the Render dashboard and set LLM_PROVIDER=anthropic.
+# To use a real LLM instead of the offline composer, add GEMINI_API_KEY in the
+# Render dashboard and set LLM_PROVIDER=gemini.
+#
+# NOTE: the free plan has an ephemeral filesystem — the SQLite case history is
+# wiped on every restart/redeploy. SEED_DEMO_CASES=1 re-runs the labelled
+# submissions on a cold start so the dashboard is never empty for a visitor.
 
 services:
   - type: web
@@ -17,4 +21,6 @@ services:
         value: offline
       - key: CHECK_DELAY_MS
         value: "250"
+      - key: SEED_DEMO_CASES
+        value: "1"
     healthCheckPath: /health

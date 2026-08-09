@@ -10,3 +10,12 @@ data/cases.db-*
 data/.llm_cache/
 .pytest_cache/
 .DS_Store
+
+# Runtime document uploads. Vendor submissions land here at run time; they
+# are per-run artefacts, not source, and the case record in the database is
+# what decisions are audited against.
+data/documents/uploads/
+
+# TypeScript / Vite build artefacts
+*.tsbuildinfo
+vite.config.ts.timestamp-*.mjs

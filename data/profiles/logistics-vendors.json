@@ -1,0 +1,54 @@
+{
+  "profile_id": "logistics-vendors",
+  "name": "Logistics & freight vendors",
+  "version": 1,
+  "description": "Procurement template for carriers and freight forwarders. Adds fleet size and a goods-in-transit insurance certificate on top of the country defaults, and insists the payee name matches the registered entity.",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "fleet_size",
+      "label": "Number of vehicles operated",
+      "type": "number",
+      "required": true,
+      "regex": null,
+      "min": 1.0,
+      "max": null,
+      "options": [],
+      "hint": "Owned or leased vehicles available for our lanes",
+      "evidence": []
+    },
+    {
+      "key": "service_region",
+      "label": "Primary service region",
+      "type": "select",
+      "required": true,
+      "regex": null,
+      "min": null,
+      "max": null,
+      "options": ["North", "South", "East", "West", "Pan-India", "International"],
+      "hint": null,
+      "evidence": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "insurance_certificate",
+      "label": "Goods-in-transit insurance certificate",
+      "required": true,
+      "accepted": [],
+      "expects": "A current insurance certificate naming the business as the insured party, covering goods in transit",
+      "freshness_months": 12
+    }
+  ],
+  "rules": [
+    {
+      "kind": "field_match",
+      "a": "legal_name",
+      "b": "bank.account_name",
+      "mode": "fuzzy",
+      "assert": null,
+      "on_fail": "NEEDS_REVIEW"
+    }
+  ],
+  "thresholds": {}
+}

@@ -99,9 +99,26 @@ LABELS = {
 
 
 def run_case(filename: str) -> dict:
+    """Run one submission to completion and return the finished case.
+
+    `run_pipeline` publishes events rather than yielding them (so the same
+    function can run inside an RQ worker). Passing a local queue gives us the
+    same stream in-process, with no Redis and no worker required — which is
+    what keeps this harness runnable in CI.
+    """
+    import queue as _queue
+
     sub = VendorSubmission(**json.loads((SUBS / filename).read_text()))
-    events = list(run_pipeline(sub))
-    return [e for e in events if e["type"] == "done"][0]["case"]
+    q: "_queue.Queue[dict]" = _queue.Queue()
+    run_pipeline(sub, local_queue=q)
+
+    while not q.empty():
+        ev = q.get_nowait()
+        if ev.get("type") == "done":
+            return ev["case"]
+        if ev.get("type") == "error":
+            raise RuntimeError(f"{filename}: pipeline errored: {ev.get('message')}")
+    raise RuntimeError(f"{filename}: pipeline produced no terminal event")
 
 
 def main() -> int:

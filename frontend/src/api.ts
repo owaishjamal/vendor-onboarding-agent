@@ -1,7 +1,45 @@
-export type Status = "APPROVED" | "PENDING_INFO" | "PENDING_REVIEW" | "REJECTED";
-export type SeverityName = "INFO" | "ADVISORY" | "NEEDS_INFO" | "NEEDS_REVIEW" | "REJECT";
+/** Thin API client over the Zamp FastAPI backend.
+ *
+ * Everything here hits the real backend. There are deliberately no stubbed
+ * responses: a submission that returns a fake case id looks identical to a
+ * working one in the UI, right up until someone asks to see the case.
+ */
 
-export interface Finding {
+export type PreflightResult = {
+  verdict: string | null;
+  detected_type: string | null;
+  message: string;
+  confidence: number | null;
+  findings?: any[];
+};
+
+export type Case = {
+  case_id: string;
+  legal_name: string;
+  trading_name: string;
+  country: string;
+  status: string;
+  reviewer_summary: string | null;
+  created_at: string;
+  completed_at: string | null;
+  top_finding?: { code: string; message: string } | null;
+  finding_counts?: Record<string, number>;
+  confidence?: any;
+  vendor_email?: string | null;
+  revision?: number;
+  superseded_by?: string | null;
+};
+
+export type CaseDetail = Case & {
+  submission: any;
+  change_summary: any;
+  actions: any[];
+  checks: CheckResult[];
+  findings: Finding[];
+  vendor_token?: string;
+};
+
+export type Finding = {
   code: string;
   severity: number;
   severity_name: SeverityName;
@@ -10,198 +48,273 @@ export interface Finding {
   message: string;
   vendor_message: string | null;
   evidence: Record<string, any>;
-}
+};
 
-export interface CheckResult {
+export type CheckResult = {
   check: string;
   label: string;
+  kind?: CheckKind;
   summary: string;
-  findings: Finding[];
   duration_ms: number;
   data: Record<string, any>;
-}
-
-export interface CaseAction {
-  action: string;
-  reviewer: string | null;
-  note: string | null;
-  prev_status: string;
-  new_status: string;
-  created_at: string;
-}
-
-export interface ChangeSummary {
-  prior_case: string;
-  resolved: string[];
-  new: string[];
-  remaining: string[];
-}
-
-export interface Case {
-  case_id: string;
-  legal_name: string;
-  trading_name: string | null;
-  country: string;
-  contact_email: string | null;
-  status: string;                 // may be an automated Status or a reviewer-decided value
-  reviewer_summary: string;
-  vendor_email: string | null;
-  created_at: string;
-  completed_at: string | null;
-  revision?: number;
-  supersedes?: string | null;
-  superseded_by?: string | null;
-  resolution?: string | null;
-  change_summary?: ChangeSummary | null;
-  actions?: CaseAction[];
-  submission?: Record<string, any>;
-  checks?: CheckResult[];
   findings?: Finding[];
-  finding_counts?: Record<string, number>;
-  top_finding?: { code: string; message: string } | null;
+};
+
+export type CheckKind = "deterministic" | "ai";
+
+export type SeverityName =
+  | "INFO" | "ADVISORY" | "CONDITION" | "NEEDS_INFO" | "NEEDS_REVIEW" | "REJECT";
+
+export type VendorCategory = {
+  id: string;
+  label: string;
+  blurb: string;
+  extra_fields: number;
+  extra_documents: number;
+};
+
+export type ResolvedRequirement = {
+  key: string;
+  label: string;
+  declared: "required" | "conditional" | "optional" | "na";
+  effective: "required" | "optional" | "na";
+  applies: boolean;
+  when: string | null;
+  when_explained: string;
+  why: string | null;
+};
+
+export type Requirements = {
+  profile_id: string;
+  profile_name: string;
+  fields: any[];
+  documents: any[];
+  resolved: { fields: ResolvedRequirement[]; documents: ResolvedRequirement[] };
+};
+
+const BASE = import.meta.env.VITE_API_BASE ?? "";
+
+// The backend guards write and reporting endpoints with X-API-Key. In a real
+// deployment this comes from a session, not a build-time constant — but a
+// header that is actually sent beats an auth scheme the UI silently ignores.
+const API_KEY = import.meta.env.VITE_API_KEY ?? "dev_secret";
+
+function headers(extra: Record<string, string> = {}): Record<string, string> {
+  return { "X-API-Key": API_KEY, ...extra };
 }
 
-export type ReviewerAction = "approve" | "reject" | "request_info" | "resolve" | "reopen";
-
-export interface Sample {
-  file: string;
-  submission_id: string;
-  legal_name: string;
-  country: string;
-  scenario: string;
-  expected_status: Status;
-}
-
-export interface CheckPlan { check: string; label: string }
-
-const j = async (r: Response) => {
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+async function asJson<T>(r: Response): Promise<T> {
+  if (!r.ok) {
+    let detail = `${r.status} ${r.statusText}`;
+    try {
+      const body = await r.json();
+      detail = body.detail || JSON.stringify(body);
+    } catch {
+      /* keep the status line */
+    }
+    throw new Error(detail);
+  }
   return r.json();
-};
-
-export const api = {
-  health: () => fetch("/health").then(j),
-  policy: () => fetch("/v1/policy").then(j),
-  countries: () => fetch("/v1/countries").then(j),
-  samples: (): Promise<Sample[]> => fetch("/v1/samples").then(j),
-  sampleBody: (n: string) => fetch(`/v1/samples/${encodeURIComponent(n)}`).then(j),
-  cases: (): Promise<Case[]> => fetch("/v1/cases").then(j),
-  case: (id: string): Promise<Case> => fetch(`/v1/cases/${id}`).then(j),
-  stats: () => fetch("/v1/stats").then(j),
-  vendorMaster: () => fetch("/v1/reference/vendor-master").then(j),
-  deniedParties: () => fetch("/v1/reference/denied-parties").then(j),
-  overrides: () => fetch("/v1/overrides").then(j),
-  reset: () => fetch("/v1/reset", { method: "POST" }).then(j),
-  action: (id: string, action: ReviewerAction, note?: string) =>
-    fetch(`/v1/cases/${id}/action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, note, reviewer: "reviewer" }),
-    }).then(j),
-  profiles: () => fetch("/v1/profiles").then(j),
-  profileTemplates: () => fetch("/v1/profile-templates").then(j),
-  lookups: () => fetch("/v1/lookups").then(j),
-  profile: (id: string, country = "") =>
-    fetch(`/v1/profiles/${encodeURIComponent(id)}?country=${encodeURIComponent(country)}`).then(j),
-  saveProfile: (id: string, body: any) =>
-    fetch(`/v1/profiles/${encodeURIComponent(id)}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(j),
-  deleteProfile: (id: string) =>
-    fetch(`/v1/profiles/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j),
-  vendorCase: (token: string) => fetch(`/v1/vendor/${encodeURIComponent(token)}`).then(j),
-  preflight: (file: File, doc_type: string, country: string, legal_name: string) => {
-    const fd = new FormData();
-    fd.append("file", file, file.name);
-    fd.append("doc_type", doc_type);
-    fd.append("country", country);
-    fd.append("legal_name", legal_name);
-    return fetch("/v1/documents/preflight", { method: "POST", body: fd }).then(j);
-  },
-};
-
-export interface Preflight {
-  status: string;
-  level: "ok" | "warn" | "error";
-  message: string;
-  detected_type: string | null;
-  filename: string;
 }
 
-export interface StreamHandlers {
-  onPlan?: (p: CheckPlan[]) => void;
-  onCheck?: (r: CheckResult) => void;
-  onDone?: (c: Case) => void;
-  onError?: (m: string) => void;
-}
+const credentials: RequestCredentials = "include";
 
-/** Read an SSE stream off a POST body. EventSource can't POST a payload. */
-async function readSSE(res: Response, h: StreamHandlers): Promise<void> {
+/** Parse an SSE body, invoking `onEvent` per event. Resolves when the stream ends. */
+export async function consumeStream(
+  res: Response,
+  onEvent: (type: string, data: any) => void,
+): Promise<void> {
   if (!res.ok || !res.body) {
-    let detail = `${res.status} ${res.statusText}`;
-    try { const e = await res.json(); if (e?.detail) detail = e.detail; } catch { /* ignore */ }
-    h.onError?.(`Request failed: ${detail}`);
-    return;
+    throw new Error(`stream failed: ${res.status} ${res.statusText}`);
   }
   const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  while (true) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const frames = buf.split("\n\n");
-    buf = frames.pop() ?? "";
-    for (const frame of frames) {
+    buffer += decoder.decode(value, { stream: true });
+
+    // Events are separated by a blank line.
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
       let event = "message";
-      const lines: string[] = [];
-      for (const line of frame.split("\n")) {
+      const dataLines: string[] = [];
+      for (const line of part.split("\n")) {
         if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) lines.push(line.slice(5).trim());
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        // lines starting with ':' are keep-alive comments — ignore
       }
-      if (!lines.length) continue;
-      let p: any;
-      try { p = JSON.parse(lines.join("\n")); } catch { continue; }
-      if (event === "plan") h.onPlan?.(p);
-      else if (event === "check") h.onCheck?.(p.result);
-      else if (event === "done") h.onDone?.(p.case);
-      else if (event === "error") h.onError?.(p.message);
+      if (!dataLines.length) continue;
+      try {
+        onEvent(event, JSON.parse(dataLines.join("\n")));
+      } catch {
+        /* a malformed frame must not kill the run */
+      }
     }
   }
 }
 
-export async function streamCase(
-  body: { kind: "sample"; name: string } | { kind: "submission"; data: any },
-  h: StreamHandlers,
-): Promise<void> {
-  const res = body.kind === "sample"
-    ? await fetch(`/v1/cases/sample/${encodeURIComponent(body.name)}/stream`, { method: "POST" })
-    : await fetch("/v1/cases/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body.data),
-      });
-  await readSSE(res, h);
-}
+export const api = {
+  // --- meta -----------------------------------------------------------
+  health: () => fetch(`${BASE}/health`, { credentials }).then((r) => asJson<any>(r)),
 
-/** Submit the vendor form: fields as JSON + real uploaded document files. */
-export async function streamForm(
-  submission: any, filesByName: Record<string, File>, h: StreamHandlers,
-  endpoint = "/v1/cases/form/stream",
-): Promise<void> {
-  const fd = new FormData();
-  fd.append("submission", JSON.stringify(submission));
-  for (const f of Object.values(filesByName)) fd.append("files", f, f.name);
-  const res = await fetch(endpoint, { method: "POST", body: fd });
-  await readSSE(res, h);
-}
+  categories: () =>
+    fetch(`${BASE}/v1/categories`, { credentials }).then((r) =>
+      asJson<VendorCategory[]>(r)),
+
+  countries: () =>
+    fetch(`${BASE}/v1/countries`, { credentials }).then((r) => asJson<any[]>(r)),
+
+  checks: () =>
+    fetch(`${BASE}/v1/checks`, { credentials }).then((r) =>
+      asJson<{ check: string; label: string; kind: CheckKind }[]>(r)),
+
+  /** What this vendor must supply, given country + category. */
+  requirements: (country: string, category: string, profileId = "") =>
+    fetch(
+      `${BASE}/v1/requirements?country=${encodeURIComponent(country)}` +
+        `&category=${encodeURIComponent(category)}` +
+        `&profile_id=${encodeURIComponent(profileId)}`,
+      { credentials },
+    ).then((r) => asJson<Requirements>(r)),
+
+  /** Re-resolve conditional requirements against a part-filled form. */
+  previewRequirements: (partial: any) =>
+    fetch(`${BASE}/v1/requirements/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(partial),
+      credentials,
+    }).then((r) => asJson<{ resolved: Requirements["resolved"] }>(r)),
+
+  // --- intake ---------------------------------------------------------
+  preflightDocument: (file: File, doc_type: string, country?: string, legal_name?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("doc_type", doc_type);
+    if (country) fd.append("country", country);
+    if (legal_name) fd.append("legal_name", legal_name);
+    return fetch(`${BASE}/v1/documents/preflight`, {
+      method: "POST", body: fd, credentials,
+    }).then((r) => asJson<PreflightResult>(r));
+  },
+
+  /** Submit the form with real files. Returns the raw SSE response. */
+  submitForm: (submission: any, files: File[]) => {
+    const fd = new FormData();
+    fd.append("submission", JSON.stringify(submission));
+    files.forEach((f) => fd.append("files", f));
+    return fetch(`${BASE}/v1/cases/form/stream`, {
+      method: "POST", body: fd, headers: headers(), credentials,
+    });
+  },
+
+  /** Submit a JSON-only submission (no attachments). Returns the SSE response. */
+  submitJson: (submission: any) =>
+    fetch(`${BASE}/v1/cases/stream`, {
+      method: "POST",
+      headers: headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(submission),
+      credentials,
+    }),
+
+  samples: () =>
+    fetch(`${BASE}/v1/samples`, { headers: headers(), credentials })
+      .then((r) => asJson<any[]>(r)),
+
+  // --- cases ----------------------------------------------------------
+  listCases: () =>
+    fetch(`${BASE}/v1/cases`, { headers: headers(), credentials })
+      .then((r) => asJson<Case[]>(r)),
+
+  getCase: (id: string) =>
+    fetch(`${BASE}/v1/cases/${id}`, { headers: headers(), credentials })
+      .then((r) => asJson<CaseDetail>(r)),
+
+  /** Cases belonging to the signed-in vendor.
+   *
+   * There is no per-vendor endpoint on this backend — a vendor's real access
+   * path is their tokened portal link, not a list. The shell only uses this to
+   * show "your current case", so it reads the same list and fails soft: a
+   * sidebar that cannot load must never take the page down with it.
+   */
+  listMyCases: () =>
+    fetch(`${BASE}/v1/cases`, { headers: headers(), credentials })
+      .then((r) => asJson<Case[]>(r))
+      .catch(() => [] as Case[]),
+
+  stats: () =>
+    fetch(`${BASE}/v1/stats`, { headers: headers(), credentials })
+      .then((r) => asJson<any>(r)),
+
+  decide: (id: string, body: { action: string; reviewer?: string; note?: string }) =>
+    fetch(`${BASE}/v1/cases/${id}/action`, {
+      method: "POST",
+      headers: headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+      credentials,
+    }).then((r) => asJson<any>(r)),
+
+  /** Ops copilot. `source` says whether the answer came from the record or a model. */
+  chat: (id: string, messages: { role: string; content: string }[]) =>
+    fetch(`${BASE}/v1/cases/${id}/chat`, {
+      method: "POST",
+      headers: headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ messages }),
+      credentials,
+    }).then((r) =>
+      asJson<{ reply: string; source: string; grounded_in: string }>(r)),
+
+  // --- vendor portal (token is the credential) -------------------------
+  vendorCase: (token: string) =>
+    fetch(`${BASE}/v1/vendor/${token}`).then((r) => asJson<any>(r)),
+
+  // --- demo role switch ------------------------------------------------
+  // NOT authentication. It picks which UI you see, nothing more, and the
+  // backend does not trust it. Real deployments put SSO in front of the ops
+  // routes; the API key on write endpoints is the actual control today. This
+  // is called out in the docs rather than dressed up as a login.
+  me: async (): Promise<Me | null> => {
+    const role = localStorage.getItem("role");
+    if (!role) return null;
+    return {
+      user_id: "demo", role: role as Me["role"],
+      email: role === "ops" ? "ops@zamp.demo" : "vendor@zamp.demo",
+      business_name: localStorage.getItem("business_name"),
+      country: localStorage.getItem("country") || "IN",
+    };
+  },
+  signup: async (body: { business_name?: string; country?: string }) => {
+    localStorage.setItem("role", "vendor");
+    if (body.business_name) localStorage.setItem("business_name", body.business_name);
+    if (body.country) localStorage.setItem("country", body.country);
+    return (await api.me())!;
+  },
+  login: async (body: { email: string }) => {
+    localStorage.setItem("role", body.email.includes("ops") ? "ops" : "vendor");
+    return (await api.me())!;
+  },
+  logout: async () => {
+    localStorage.removeItem("role");
+  },
+};
+
+export type Me = {
+  user_id: string;
+  email: string;
+  role: "vendor" | "ops";
+  business_name: string | null;
+  country: string;
+};
 
 // ---------------------------------------------------------------------------
-// Presentation
+// Presentation helpers
 // ---------------------------------------------------------------------------
 
-export const STATUS_META: Record<Status, {
+export const STATUS_META: Record<string, {
   label: string; cls: string; dot: string; blurb: string; who: string;
 }> = {
   APPROVED: {
@@ -210,6 +323,13 @@ export const STATUS_META: Record<Status, {
     dot: "bg-emerald-500",
     blurb: "All checks passed",
     who: "No action needed",
+  },
+  APPROVED_WITH_CONDITIONS: {
+    label: "Approved — with conditions",
+    cls: "bg-teal-50 text-teal-700 ring-teal-600/20",
+    dot: "bg-teal-500",
+    blurb: "Onboarded, with items to resolve",
+    who: "Track the conditions to closure",
   },
   PENDING_INFO: {
     label: "Pending — vendor",
@@ -222,8 +342,8 @@ export const STATUS_META: Record<Status, {
     label: "Pending — internal review",
     cls: "bg-amber-50 text-amber-800 ring-amber-600/20",
     dot: "bg-amber-500",
-    blurb: "Needs a human judgement call",
-    who: "Waiting on us — do not contact the vendor yet",
+    blurb: "Needs a human judgement",
+    who: "Waiting on us",
   },
   REJECTED: {
     label: "Rejected",
@@ -232,65 +352,83 @@ export const STATUS_META: Record<Status, {
     blurb: "Cannot be onboarded",
     who: "Refer to compliance",
   },
+  ERROR: {
+    label: "Interrupted",
+    cls: "bg-slate-100 text-slate-700 ring-slate-400/30",
+    dot: "bg-slate-500",
+    blurb: "The run stopped before a decision",
+    who: "Re-submit to run the checks again",
+  },
 };
 
-// Statuses that only exist after a human acts. Mapped to a base look + a label.
-const REVIEWER_STATUS: Record<string, { base: Status; label: string }> = {
-  APPROVED_BY_REVIEWER: { base: "APPROVED", label: "Approved by reviewer" },
-  REJECTED_BY_REVIEWER: { base: "REJECTED", label: "Rejected by reviewer" },
-};
-
-export function statusMeta(status: string) {
-  if (status in STATUS_META) return STATUS_META[status as Status];
-  const r = REVIEWER_STATUS[status];
-  if (r) return { ...STATUS_META[r.base], label: r.label };
-  return { label: status, cls: "bg-slate-100 text-slate-600 ring-slate-300",
-           dot: "bg-slate-400", blurb: "", who: "" };
+export function statusMeta(status: string | null | undefined) {
+  if (status && status in STATUS_META) return STATUS_META[status];
+  const base = (status || "").replace("_BY_REVIEWER", "");
+  if (base in STATUS_META) {
+    return { ...STATUS_META[base], label: `${STATUS_META[base].label} (by reviewer)` };
+  }
+  return {
+    label: status || "Running",
+    cls: "bg-slate-100 text-slate-600 ring-slate-300",
+    dot: "bg-slate-400", blurb: "", who: "",
+  };
 }
 
-export const SEVERITY_META: Record<SeverityName, { label: string; cls: string; bar: string }> = {
-  INFO: { label: "Info", cls: "bg-slate-100 text-slate-600 ring-slate-300", bar: "bg-slate-300" },
-  ADVISORY: { label: "Advisory", cls: "bg-slate-100 text-slate-700 ring-slate-300", bar: "bg-slate-400" },
-  NEEDS_INFO: { label: "Ask vendor", cls: "bg-sky-50 text-sky-700 ring-sky-300", bar: "bg-sky-500" },
-  NEEDS_REVIEW: { label: "Needs review", cls: "bg-amber-50 text-amber-800 ring-amber-300", bar: "bg-amber-500" },
-  REJECT: { label: "Reject", cls: "bg-rose-50 text-rose-700 ring-rose-300", bar: "bg-rose-500" },
+export const SEVERITY_META: Record<SeverityName, { label: string; cls: string }> = {
+  INFO: { label: "Info", cls: "bg-slate-100 text-slate-600 ring-slate-300" },
+  ADVISORY: { label: "Advisory", cls: "bg-slate-100 text-slate-700 ring-slate-300" },
+  CONDITION: { label: "Condition", cls: "bg-teal-50 text-teal-700 ring-teal-300" },
+  NEEDS_INFO: { label: "Ask vendor", cls: "bg-sky-50 text-sky-700 ring-sky-300" },
+  NEEDS_REVIEW: { label: "Needs review", cls: "bg-amber-50 text-amber-800 ring-amber-300" },
+  REJECT: { label: "Reject", cls: "bg-rose-50 text-rose-700 ring-rose-300" },
 };
 
-// Map the int severity to a name, so a finding that (for any reason) arrives
-// without severity_name still resolves instead of crashing the render.
-const SEVERITY_BY_INT: Record<number, SeverityName> = {
-  0: "INFO", 1: "ADVISORY", 2: "NEEDS_INFO", 3: "NEEDS_REVIEW", 4: "REJECT",
-};
+/** Severity lookup that tolerates an int-only finding from the live stream. */
+export function sevName(f: { severity_name?: string; severity?: number }): SeverityName {
+  if (f.severity_name && f.severity_name in SEVERITY_META) {
+    return f.severity_name as SeverityName;
+  }
+  const byInt: SeverityName[] =
+    ["INFO", "ADVISORY", "CONDITION", "NEEDS_INFO", "NEEDS_REVIEW", "REJECT"];
+  return byInt[f.severity ?? 0] ?? "INFO";
+}
 
 export function sevMeta(f: { severity_name?: string; severity?: number }) {
-  const name = (f.severity_name as SeverityName) ?? SEVERITY_BY_INT[f.severity ?? 0];
-  return SEVERITY_META[name] ?? SEVERITY_META.INFO;
+  return SEVERITY_META[sevName(f)];
 }
 
-export function sevName(f: { severity_name?: string; severity?: number }): SeverityName {
-  return (f.severity_name as SeverityName) ?? SEVERITY_BY_INT[f.severity ?? 0] ?? "INFO";
-}
-
-export const shortTime = (iso?: string | null) =>
-  iso ? new Date(iso + "Z").toLocaleString(undefined, {
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-  }) : "—";
-
-/** Compact relative age, e.g. "3d", "5h", "just now". */
-export const ageOf = (iso?: string | null): string => {
-  if (!iso) return "—";
-  const ms = Date.now() - new Date(iso + "Z").getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return `${Math.floor(hrs / 24)}d`;
+export const CHECK_KIND_META: Record<CheckKind, { label: string; cls: string; blurb: string }> = {
+  deterministic: {
+    label: "Rule",
+    cls: "bg-indigo-50 text-indigo-700 ring-indigo-300",
+    blurb: "Checksum, format rule or registry lookup — same answer every time",
+  },
+  ai: {
+    label: "AI",
+    cls: "bg-violet-50 text-violet-700 ring-violet-300",
+    blurb: "Model judgement over unstructured content — carries confidence",
+  },
 };
 
-export const ageDays = (iso?: string | null): number =>
-  iso ? (Date.now() - new Date(iso + "Z").getTime()) / 86400000 : 0;
+export function flag(country: string): string {
+  if (!country || country.length !== 2) return "";
+  return String.fromCodePoint(
+    ...country.toUpperCase().split("").map((c) => 127397 + c.charCodeAt(0)));
+}
 
-export const flag = (cc: string) =>
-  ({ US: "United States", GB: "United Kingdom", DE: "Germany",
-     IN: "India", SG: "Singapore" } as Record<string, string>)[cc] ?? cc;
+export function shortTime(iso?: string | null): string {
+  if (!iso) return "";
+  return iso.slice(11, 16);
+}
+
+export function ageDays(iso?: string | null): number {
+  if (!iso) return 0;
+  return (Date.now() - new Date(iso).getTime()) / 86_400_000;
+}
+
+export function ageOf(iso?: string | null): string {
+  const d = ageDays(iso);
+  if (d < 1 / 24) return "just now";
+  if (d < 1) return `${Math.floor(d * 24)}h ago`;
+  return `${Math.floor(d)}d ago`;
+}

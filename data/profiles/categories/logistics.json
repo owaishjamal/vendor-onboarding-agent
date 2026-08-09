@@ -1,0 +1,89 @@
+{
+  "profile_id": "category-logistics",
+  "name": "Logistics / Transportation",
+  "version": 1,
+  "description": "Transport, courier, freight, warehousing and delivery vendors. Custody of goods in transit is the defining risk, so cover and carrier licensing lead.",
+  "category": "logistics",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "fleet_size",
+      "label": "Vehicles operated",
+      "type": "number",
+      "requirement": "required",
+      "why": "Owned or contracted vehicles available for our lanes.",
+      "min": 0,
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "service_region",
+      "label": "Primary service region",
+      "type": "select",
+      "requirement": "required",
+      "why": "Determines which lanes we can allocate and whether customs capability is needed.",
+      "options": [
+        "North",
+        "South",
+        "East",
+        "West",
+        "Pan-India",
+        "International"
+      ],
+      "validation_source": []
+    },
+    {
+      "key": "warehousing",
+      "label": "Do you provide warehousing?",
+      "type": "select",
+      "requirement": "required",
+      "why": "Storing our goods requires warehouse liability cover in addition to transit cover.",
+      "options": [
+        "No",
+        "Yes"
+      ],
+      "validation_source": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "transit_insurance",
+      "label": "Goods-in-transit insurance",
+      "requirement": "required",
+      "why": "Covers our goods while they are in your custody. Non-negotiable before first dispatch.",
+      "expects": "A current goods-in-transit insurance certificate naming the business",
+      "freshness_months": 12,
+      "accepted": []
+    },
+    {
+      "key": "carrier_licence",
+      "label": "Carrier / transport licence",
+      "requirement": "conditional",
+      "when": "fleet_size > 0",
+      "why": "Operating vehicles commercially requires a valid transport licence.",
+      "expects": "A commercial carrier or transport operator licence naming the business",
+      "freshness_months": 12,
+      "accepted": []
+    },
+    {
+      "key": "warehouse_licence",
+      "label": "Warehouse licence / liability cover",
+      "requirement": "conditional",
+      "when": "warehousing == 'Yes'",
+      "why": "Storage carries a separate liability exposure from transit.",
+      "expects": "A warehouse licence or warehouse liability insurance certificate",
+      "accepted": []
+    },
+    {
+      "key": "customs_registration",
+      "label": "Customs / IEC registration",
+      "requirement": "conditional",
+      "when": "service_region == 'International'",
+      "why": "Cross-border movement requires an import-export registration.",
+      "expects": "An import-export code or customs broker registration certificate",
+      "accepted": []
+    }
+  ],
+  "rules": [],
+  "thresholds": {}
+}

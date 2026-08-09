@@ -51,9 +51,10 @@ def run(sub: VendorSubmission) -> CheckResult:
     # completeness enforces ONLY what the profile itself declares (its required
     # fields are owned by custom_rules; its documents are checked below), never
     # the country vendor pack.
-    from backend.app.profiles.store import get_profile
-    _profile = get_profile(sub.profile_id, sub.country)
+    from backend.app.profiles.store import get_profile, resolve_requirements
+    _profile = get_profile(sub.profile_id, sub.country, sub.category)
     _vendor_shaped = _profile.extends == "country_defaults"
+    _resolved = resolve_requirements(_profile, sub.model_dump(mode="json"))
 
     if not _vendor_shaped:
         # Non-onboarding workflow: enforce ONLY the profile's own documents.
@@ -155,18 +156,29 @@ def run(sub: VendorSubmission) -> CheckResult:
         # check has no access to the content and must not guess from metadata.
         supplied_types = {d.doc_type for d in sub.documents}
 
-        for spec in required_documents(country):
-            dtype = spec["doc_type"]
-            if dtype in supplied_types:
+        # The resolved profile is the single source of truth for what this
+        # vendor owes us: country baseline, plus whatever their category adds,
+        # plus any conditional item their own answers triggered. It already
+        # includes the country documents, so we iterate it rather than
+        # `required_documents(country)` — otherwise a category could never
+        # mark a country default not-applicable (an individual has no
+        # certificate of incorporation).
+        for item in _resolved["documents"]:
+            if item["effective"] != "required" or item["key"] in supplied_types:
                 continue
-
-            missing_docs.append(spec["label"])
+            missing_docs.append(item["label"])
+            why = f" {item['why']}" if item.get("why") else ""
+            because = ""
+            if item["declared"] == "conditional" and item.get("when_explained"):
+                because = f" (required because {item['when_explained']})"
             findings.append(finding(
                 FindingCode.MISSING_REQUIRED_DOCUMENT, Severity.NEEDS_INFO, CHECK,
-                message=f"Required document '{dtype}' ({spec['label']}) was not attached.",
-                field=f"documents.{dtype}",
-                vendor_message=f"{spec['label']} is required and was not attached.",
-                doc_type=dtype, label=spec["label"],
+                message=(f"Required document '{item['key']}' ({item['label']}) "
+                         f"was not attached{because}."),
+                field=f"documents.{item['key']}",
+                vendor_message=f"{item['label']} is required and was not attached.{why}",
+                doc_type=item["key"], label=item["label"],
+                requirement=item["declared"], condition=item.get("when"),
             ))
 
     n = len(missing_fields) + len(missing_docs)
@@ -178,5 +190,10 @@ def run(sub: VendorSubmission) -> CheckResult:
         check=CHECK, label="Completeness", findings=findings, summary=summary,
         duration_ms=t.ms,
         data={"missing_fields": missing_fields, "missing_documents": missing_docs,
-              "documents_supplied": sorted(supplied_types)},
+              "documents_supplied": sorted(supplied_types),
+              "category": sub.category,
+              # The full resolved checklist, including items that came out
+              # not-applicable. Ops needs to see what was considered and
+              # dismissed, not just what is outstanding.
+              "requirements": _resolved},
     )

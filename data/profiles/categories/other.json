@@ -1,0 +1,31 @@
+{
+  "profile_id": "category-other",
+  "name": "Other / Specialized",
+  "version": 1,
+  "description": "Vendors that do not fit the standard categories. Collects nothing extra beyond the country baseline, but forces a human review — an unclassifiable vendor is exactly the kind that deserves a pair of eyes.",
+  "category": "other",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "nature_of_engagement",
+      "label": "What will you supply?",
+      "type": "textarea",
+      "requirement": "required",
+      "why": "Because this vendor does not fit a standard category, a reviewer reads this before approval.",
+      "options": [],
+      "validation_source": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "supporting_document",
+      "label": "Any supporting registration or licence",
+      "requirement": "optional",
+      "why": "Anything that evidences your business is legitimate and permitted to trade.",
+      "expects": "Any official registration, licence or certificate naming the business",
+      "accepted": []
+    }
+  ],
+  "rules": [],
+  "thresholds": {}
+}

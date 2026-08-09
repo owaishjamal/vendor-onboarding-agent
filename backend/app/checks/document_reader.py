@@ -267,21 +267,24 @@ def _cache_put(digest: str, r: ReadResult) -> None:
 
 def read_document(doc) -> ReadResult:
     """Read a SubmittedDocument. Prefers a real file; falls back to `extracted`."""
-    # --- path 1: a real file on disk
+    # --- path 1: a real file
     if getattr(doc, "path", None):
-        p = config.DATA_DIR / "documents" / doc.path
-        if p.exists():
+        try:
+            from backend.app.storage.documents import get_storage
+            data = get_storage().read(doc.path)
             import hashlib
             digest = hashlib.sha256(
-                p.read_bytes() + f"|{config.DOC_EXTRACTOR}|{EXTRACTOR_VERSION}".encode()
+                data + f"|{config.DOC_EXTRACTOR}|{EXTRACTOR_VERSION}".encode()
             ).hexdigest()[:32]
             hit = _cache_get(digest)
             if hit is not None:
                 return hit
-            result = _read_file(p)
+            suffix = Path(doc.path).suffix.lower()
+            result = _read_data(data, suffix)
             _cache_put(digest, result)
             return result
-        log.warning("document path set but file missing: %s", p)
+        except FileNotFoundError:
+            log.warning("document path set but file missing: %s", doc.path)
 
     # --- path 2: pre-parsed block supplied with the submission
     if doc.extracted:
@@ -307,9 +310,7 @@ def read_document(doc) -> ReadResult:
                       note="No file and no field block supplied.")
 
 
-def _read_file(path: Path) -> ReadResult:
-    data = path.read_bytes()
-    suffix = path.suffix.lower()
+def _read_data(data: bytes, suffix: str) -> ReadResult:
 
     # Vision path: hand the page image straight to a VLM. This is the
     # generalising extractor — it reads arbitrary real layouts a label parser
@@ -332,7 +333,7 @@ def _read_file(path: Path) -> ReadResult:
         elif suffix in (".png", ".jpg", ".jpeg", ".tif", ".tiff"):
             return _ocr_best(lambda pp: _ocr_image(data, pp))
     except Exception as exc:
-        log.warning("failed to read %s: %s", path, exc)
+        log.warning("failed to read document: %s", exc)
         return ReadResult(source="none", confidence=0.0, detected_type=None,
                           note=f"Could not be read ({type(exc).__name__}).")
 

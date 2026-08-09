@@ -1,0 +1,70 @@
+{
+  "profile_id": "category-goods",
+  "name": "Goods / Products",
+  "version": 1,
+  "description": "Vendors supplying physical products, materials, equipment or inventory. Adds product-liability and quality evidence, and asks for an MSME registration where the vendor claims one.",
+  "category": "goods",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "nature_of_goods",
+      "label": "Nature of goods supplied",
+      "type": "textarea",
+      "requirement": "required",
+      "why": "Determines whether product certifications or import licences apply to you.",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "hsn_codes",
+      "label": "HSN / commodity codes",
+      "type": "text",
+      "requirement": "optional",
+      "why": "Lets us match your invoices to the right tax treatment automatically.",
+      "hint": "Comma-separated, if you know them",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "msme_number",
+      "label": "Udyam / MSME registration number",
+      "type": "id",
+      "requirement": "conditional",
+      "when": "is_msme == true",
+      "why": "MSME vendors are entitled to statutory payment terms, so we record this to make sure you are paid on time.",
+      "options": [],
+      "validation_source": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "product_certification",
+      "label": "Product / quality certification",
+      "requirement": "conditional",
+      "when": "requires_certification == true",
+      "why": "Regulated or safety-critical goods need certification before we can raise a purchase order.",
+      "expects": "A quality or product-conformance certificate naming the supplier or the product line",
+      "accepted": []
+    },
+    {
+      "key": "msme_certificate",
+      "label": "Udyam / MSME certificate",
+      "requirement": "conditional",
+      "when": "msme_number is present",
+      "why": "Confirms the MSME registration number you provided.",
+      "expects": "A Udyam registration certificate showing the registration number and enterprise name",
+      "accepted": []
+    },
+    {
+      "key": "insurance_certificate",
+      "label": "Product liability insurance",
+      "requirement": "optional",
+      "why": "Speeds up approval for high-value orders; not required to onboard.",
+      "expects": "A current liability insurance certificate naming the business",
+      "freshness_months": 12,
+      "accepted": []
+    }
+  ],
+  "rules": [],
+  "thresholds": {}
+}

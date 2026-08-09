@@ -222,8 +222,13 @@ def test_semantic_rule_escalates_offline():
 # Vendor portal view (disclosure by construction)
 # ===========================================================================
 
+import queue
 def _run(f):
-    events = list(run_pipeline(load(f)))
+    q = queue.Queue()
+    run_pipeline(load(f), local_queue=q)
+    events = []
+    while not q.empty():
+        events.append(q.get())
     return [e for e in events if e["type"] == "done"][0]["case"]
 
 

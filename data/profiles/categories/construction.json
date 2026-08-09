@@ -1,0 +1,79 @@
+{
+  "profile_id": "category-construction",
+  "name": "Construction / Projects",
+  "version": 1,
+  "description": "Contractors, civil works, installation, infrastructure and interior vendors. The highest-risk category: site work brings statutory licensing, worker insurance and safety obligations that transfer to the buyer if unchecked.",
+  "category": "construction",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "trade_specialisation",
+      "label": "Trade / specialisation",
+      "type": "text",
+      "requirement": "required",
+      "why": "Determines which trade licence we need to verify.",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "contract_value",
+      "label": "Typical project value",
+      "type": "currency",
+      "requirement": "optional",
+      "why": "Projects above our threshold need performance security before work starts.",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "workers_on_site",
+      "label": "Workers deployed on site",
+      "type": "number",
+      "requirement": "required",
+      "why": "Any worker on our premises must be covered by your workers' compensation policy.",
+      "min": 0,
+      "options": [],
+      "validation_source": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "contractor_licence",
+      "label": "Contractor / trade licence",
+      "requirement": "required",
+      "why": "Site work without a valid licence exposes both parties to statutory penalties.",
+      "expects": "A government-issued contractor or trade licence naming the business",
+      "freshness_months": 12,
+      "accepted": []
+    },
+    {
+      "key": "workers_insurance",
+      "label": "Workers' compensation insurance",
+      "requirement": "conditional",
+      "when": "workers_on_site > 0",
+      "why": "Legally required the moment your people set foot on our site.",
+      "expects": "A workers' compensation or employer's liability certificate naming the business",
+      "freshness_months": 12,
+      "accepted": []
+    },
+    {
+      "key": "safety_certification",
+      "label": "Health & safety certification",
+      "requirement": "conditional",
+      "when": "workers_on_site > 5",
+      "why": "Larger crews require a documented safety management system.",
+      "expects": "A health and safety certification or safety policy document naming the business",
+      "accepted": []
+    },
+    {
+      "key": "performance_bond",
+      "label": "Performance bond / bank guarantee",
+      "requirement": "conditional",
+      "when": "contract_value > 5000000",
+      "why": "Standard protection on large projects; released on completion.",
+      "expects": "A bank guarantee or performance bond naming the business and a value",
+      "accepted": []
+    }
+  ],
+  "rules": [],
+  "thresholds": {}
+}

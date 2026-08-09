@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -28,7 +30,7 @@ from backend.app.rules import (
 )
 from backend.app.storage import cases as casestore
 from backend.app.storage import db
-
+from backend.app.storage.documents import get_storage
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)-7s %(name)s | %(message)s")
 log = logging.getLogger("vo.api")
@@ -43,6 +45,40 @@ def _startup() -> None:
     db.init_db()
     log.info("database ready; countries=%s; llm=%s",
              ",".join(supported_countries()), get_llm().provider)
+    if os.getenv("SEED_DEMO_CASES", "").lower() in ("1", "true", "yes"):
+        _seed_demo_cases()
+
+
+def _seed_demo_cases() -> None:
+    """Run the labelled submissions once, if the queue is empty.
+
+    Hosting platforms with an ephemeral filesystem (Render free tier, Fly
+    machines) lose the SQLite file on every restart. Without this a visitor
+    opening the public link after a redeploy lands on an empty dashboard,
+    which reads as "nothing works" rather than "nothing has run yet".
+
+    Only ever seeds an EMPTY database, so it can never pollute real history.
+    """
+    try:
+        if casestore.list_cases(limit=1):
+            return
+        manifest_path = config.SUBMISSION_DIR / "manifest.json"
+        if not manifest_path.exists():
+            return
+        seeded = 0
+        for entry in json.loads(manifest_path.read_text()):
+            path = config.SUBMISSION_DIR / entry["file"]
+            if not path.exists():
+                continue
+            try:
+                sub = VendorSubmission(**json.loads(path.read_text()))
+                run_pipeline(sub)
+                seeded += 1
+            except Exception as exc:          # one bad fixture must not block boot
+                log.warning("demo seed skipped %s: %s", entry.get("file"), exc)
+        log.info("seeded %d demo cases into an empty queue", seeded)
+    except Exception as exc:                   # never let seeding break startup
+        log.warning("demo seeding failed, continuing with an empty queue: %s", exc)
 
 
 def _validate_upload(filename: str, size_bytes: int) -> None:
@@ -94,32 +130,137 @@ def countries() -> list[dict]:
     return out
 
 
+@app.get("/v1/categories")
+def categories() -> list[dict]:
+    """Vendor categories for the intake dropdown, with what each one adds."""
+    from backend.app.profiles.store import list_categories
+    return list_categories()
+
+
+@app.get("/v1/requirements")
+def requirements(country: str = "", category: str = "",
+                 profile_id: str = "") -> dict:
+    """What THIS vendor has to supply, before they submit anything.
+
+    Powers the dynamic form: the vendor picks a category and immediately sees
+    the fields and documents that apply to them, each with the reason it is
+    being asked for. Conditional items are resolved against whatever has been
+    entered so far, so the list tightens as the form is filled in.
+    """
+    from backend.app.profiles.store import get_profile, resolve_requirements
+    prof = get_profile(profile_id or None, country, category or None)
+    resolved = resolve_requirements(prof, {"country": country, "category": category})
+    return {
+        "profile_id": prof.profile_id,
+        "profile_name": prof.name,
+        "country": country,
+        "category": category,
+        "fields": [f.model_dump(mode="json") for f in prof.fields],
+        "documents": [d.model_dump(mode="json") for d in prof.documents],
+        "resolved": resolved,
+    }
+
+
+@app.post("/v1/requirements/preview")
+def requirements_preview(payload: dict[str, Any] = Body(...)) -> dict:
+    """Re-resolve requirements against a partially-filled submission.
+
+    Called as the vendor types, so a conditional document appears the moment
+    the answer that triggers it is given ("you told us 12 people will be on
+    site, so we now need workers' compensation cover").
+    """
+    from backend.app.profiles.store import get_profile, resolve_requirements
+    prof = get_profile(payload.get("profile_id") or None,
+                       payload.get("country", "") or "",
+                       payload.get("category") or None)
+    return {"resolved": resolve_requirements(prof, payload)}
+
+
 @app.get("/v1/policy")
 def policy() -> dict:
     return {"common": load_common_rules(), "countries": countries()}
 
 
+from fastapi.security.api_key import APIKeyHeader
+from fastapi import Security
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def require_api_key(api_key: str = Security(api_key_header)):
+    expected_key = os.environ.get("API_KEY", "dev_secret")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+    import hmac
+    if not hmac.compare_digest(api_key, expected_key):
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    return api_key
+
 # ---------------------------------------------------------------------------
 # Cases
 # ---------------------------------------------------------------------------
 
-def _sse(events: Iterator[dict], plan: list[dict] | None = None) -> Iterator[str]:
-    yield f"event: plan\ndata: {json.dumps(plan or CHECK_PLAN)}\n\n"
-    for ev in events:
-        yield f"event: {ev['type']}\ndata: {json.dumps(ev, default=str)}\n\n"
+# A run that produces no event for this long is treated as dead. Without a
+# ceiling the browser sits on an open connection forever when a worker dies
+# mid-job, which looks identical to "your product is broken".
+STREAM_IDLE_TIMEOUT_S = float(os.getenv("STREAM_IDLE_TIMEOUT_S", "120"))
 
 
 def _stream(sub: VendorSubmission) -> StreamingResponse:
-    from backend.app.pipeline.runner import plan_for
+    """Run a submission and stream one Server-Sent Event per completed stage.
+
+    The pipeline runs on a background thread and pushes events into a queue
+    that this response drains. Two consequences worth stating:
+
+      * The run does not depend on the browser staying connected. If the tab
+        closes, the case still completes and is persisted — the viewer is a
+        spectator, not the driver.
+      * There is no broker and no worker process. At onboarding volumes the
+        whole run is sub-second, so a job queue would add an service to
+        provision and monitor in exchange for nothing.
+    """
+    import queue
+    import threading
+
+    from backend.app.pipeline.runner import plan_for, run_pipeline
+
+    cid = uuid.uuid4().hex[:12]
+    local_q: "queue.Queue[dict]" = queue.Queue()
+    threading.Thread(
+        target=run_pipeline, args=(sub, cid, local_q), daemon=True
+    ).start()
+
+    def event_generator():
+        yield f"event: plan\ndata: {json.dumps(plan_for(sub))}\n\n"
+        yield f"event: mode\ndata: {json.dumps({'case_id': cid})}\n\n"
+
+        deadline = time.monotonic() + STREAM_IDLE_TIMEOUT_S
+        while True:
+            if time.monotonic() > deadline:
+                casestore.fail_case(cid, "Run timed out before a decision was reached.")
+                yield ("event: error\ndata: "
+                       + json.dumps({"message": "Run timed out."}) + "\n\n")
+                return
+            try:
+                ev = local_q.get(timeout=1.0)
+            except queue.Empty:
+                # Keep-alive comment: proxies drop idle SSE connections.
+                yield ": keep-alive\n\n"
+                continue
+
+            deadline = time.monotonic() + STREAM_IDLE_TIMEOUT_S
+            yield f"event: {ev['type']}\ndata: {json.dumps(ev, default=str)}\n\n"
+            if ev["type"] in ("done", "error"):
+                return
+
     return StreamingResponse(
-        _sse(run_pipeline(sub), plan_for(sub)),
+        event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                  "Connection": "keep-alive"},
     )
 
 
-@app.post("/v1/cases/stream")
+@app.post("/v1/cases/stream", dependencies=[Depends(require_api_key)])
 def run_submission(payload: dict[str, Any] = Body(...)) -> StreamingResponse:
     try:
         sub = VendorSubmission(**payload)
@@ -148,18 +289,17 @@ async def run_form(
         raise HTTPException(422, f"invalid submission JSON: {exc}")
 
     uid = uuid.uuid4().hex[:12]
-    updir = config.DATA_DIR / "documents" / "uploads" / uid
     saved: dict[str, str] = {}
+    storage = get_storage()
     for f in files:
         if not f.filename:
             continue
         blob = await f.read()
         # Enterprise hygiene: extension allowlist + size cap before we touch it.
         _validate_upload(f.filename, len(blob))
-        dest = updir / Path(f.filename).name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(blob)
-        saved[Path(f.filename).name] = f"uploads/{uid}/{Path(f.filename).name}"
+        logical_path = f"uploads/{uid}/{Path(f.filename).name}"
+        storage.save(logical_path, blob)
+        saved[Path(f.filename).name] = logical_path
 
     # Attach saved-file paths to the matching document entries.
     for d in data.get("documents", []):
@@ -211,17 +351,16 @@ async def vendor_resubmit(
         raise HTTPException(422, f"invalid submission JSON: {exc}")
 
     uid = uuid.uuid4().hex[:12]
-    updir = config.DATA_DIR / "documents" / "uploads" / uid
     saved: dict[str, str] = {}
+    storage = get_storage()
     for f in files:
         if not f.filename:
             continue
         blob = await f.read()
         _validate_upload(f.filename, len(blob))
-        dest = updir / Path(f.filename).name
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(blob)
-        saved[Path(f.filename).name] = f"uploads/{uid}/{Path(f.filename).name}"
+        logical_path = f"uploads/{uid}/{Path(f.filename).name}"
+        storage.save(logical_path, blob)
+        saved[Path(f.filename).name] = logical_path
     for d in data.get("documents", []):
         fn = Path(d.get("filename", "")).name
         if fn in saved:
@@ -287,7 +426,7 @@ async def documents_preflight(
     from backend.app.dva.preflight import preflight
 
     blob = await file.read()
-    enterprise.validate_upload(file.filename or "file", len(blob))
+    _validate_upload(file.filename or "file", len(blob))
 
     accepted: set[str] = set()
     try:
@@ -303,14 +442,14 @@ async def documents_preflight(
                      legal_name or None)
 
 
-@app.get("/v1/samples")
+@app.get("/v1/samples", dependencies=[Depends(require_api_key)])
 def samples() -> list[dict]:
     """Bundled submissions with their intended outcome and a scenario note."""
     manifest = config.SUBMISSION_DIR / "manifest.json"
     return json.loads(manifest.read_text()) if manifest.exists() else []
 
 
-@app.get("/v1/samples/{name}")
+@app.get("/v1/samples/{name}", dependencies=[Depends(require_api_key)])
 def sample_body(name: str) -> dict:
     path: Path = config.SUBMISSION_DIR / name
     if not path.resolve().is_relative_to(config.SUBMISSION_DIR.resolve()):
@@ -320,7 +459,7 @@ def sample_body(name: str) -> dict:
     return json.loads(path.read_text())
 
 
-@app.post("/v1/cases/sample/{name}/stream")
+@app.post("/v1/cases/sample/{name}/stream", dependencies=[Depends(require_api_key)])
 def run_sample(name: str) -> StreamingResponse:
     path: Path = config.SUBMISSION_DIR / name
     if not path.resolve().is_relative_to(config.SUBMISSION_DIR.resolve()):
@@ -330,12 +469,12 @@ def run_sample(name: str) -> StreamingResponse:
     return _stream(VendorSubmission(**json.loads(path.read_text())))
 
 
-@app.get("/v1/cases")
+@app.get("/v1/cases", dependencies=[Depends(require_api_key)])
 def list_cases(limit: int = 200) -> list[dict]:
     return casestore.list_cases(limit)
 
 
-@app.get("/v1/cases/{case_id}")
+@app.get("/v1/cases/{case_id}", dependencies=[Depends(require_api_key)])
 def get_case(case_id: str) -> dict:
     c = casestore.get_case(case_id)
     if not c:
@@ -343,12 +482,27 @@ def get_case(case_id: str) -> dict:
     return c
 
 
-@app.get("/v1/stats")
+@app.post("/v1/cases/{case_id}/chat", dependencies=[Depends(require_api_key)])
+def case_chat(case_id: str, payload: dict[str, Any] = Body(...)) -> dict:
+    """Talk to the AI agent regarding a specific case."""
+    c = casestore.get_case(case_id)
+    if not c:
+        raise HTTPException(404, "case not found")
+        
+    messages = payload.get("messages", [])
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(422, "messages must be a non-empty list")
+    # Bound the history: an unbounded transcript is both a cost and a prompt-
+    # injection surface, and nothing useful lives more than a few turns back.
+    return get_llm().ops_chat(c, messages[-12:])
+
+
+@app.get("/v1/stats", dependencies=[Depends(require_api_key)])
 def stats() -> dict:
     return casestore.stats()
 
 
-@app.post("/v1/cases/{case_id}/action")
+@app.post("/v1/cases/{case_id}/action", dependencies=[Depends(require_api_key)])
 def case_action(case_id: str, payload: dict[str, Any] = Body(...)) -> dict:
     """Record a reviewer decision on a case.
 
@@ -375,19 +529,19 @@ def case_action(case_id: str, payload: dict[str, Any] = Body(...)) -> dict:
 # Reference data
 # ---------------------------------------------------------------------------
 
-@app.get("/v1/reference/vendor-master")
+@app.get("/v1/reference/vendor-master", dependencies=[Depends(require_api_key)])
 def vendor_master() -> list[dict]:
     p = config.SEED_DIR / "vendor_master.json"
     return json.loads(p.read_text()) if p.exists() else []
 
 
-@app.get("/v1/reference/denied-parties")
+@app.get("/v1/reference/denied-parties", dependencies=[Depends(require_api_key)])
 def denied_parties() -> list[dict]:
     p = config.SEED_DIR / "denied_parties.json"
     return json.loads(p.read_text()) if p.exists() else []
 
 
-@app.post("/v1/reset")
+@app.post("/v1/reset", dependencies=[Depends(require_api_key)])
 def reset() -> dict:
     return {"status": "reset", **db.reset_db()}
 

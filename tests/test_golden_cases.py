@@ -46,8 +46,14 @@ def load(filename: str) -> VendorSubmission:
     return VendorSubmission(**json.loads((SUBS / filename).read_text()))
 
 
+import queue
+
 def run(filename: str) -> dict:
-    events = list(run_pipeline(load(filename)))
+    q = queue.Queue()
+    run_pipeline(load(filename), local_queue=q)
+    events = []
+    while not q.empty():
+        events.append(q.get())
     errors = [e for e in events if e["type"] == "error"]
     assert not errors, f"pipeline errored: {errors}"
     done = [e for e in events if e["type"] == "done"]
@@ -302,14 +308,26 @@ def test_unsupported_country_never_approves():
     """We cannot validate what we have no rules for, so we must not approve it."""
     sub = load("VS-01_northwind_clean.json")
     sub.country = "ZZ"
-    c = [e for e in run_pipeline(sub) if e["type"] == "done"][0]["case"]
+    
+    q = queue.Queue()
+    run_pipeline(sub, local_queue=q)
+    events = []
+    while not q.empty():
+        events.append(q.get())
+        
+    c = [e for e in events if e["type"] == "done"][0]["case"]
     assert c["status"] != Status.APPROVED.value
     assert "UNSUPPORTED_COUNTRY" in codes(c)
 
 
 def test_empty_submission_does_not_crash():
     sub = VendorSubmission()
-    events = list(run_pipeline(sub))
+    
+    q = queue.Queue()
+    run_pipeline(sub, local_queue=q)
+    events = []
+    while not q.empty():
+        events.append(q.get())
     assert not [e for e in events if e["type"] == "error"]
     c = [e for e in events if e["type"] == "done"][0]["case"]
     assert c["status"] != Status.APPROVED.value

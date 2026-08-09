@@ -6,10 +6,14 @@ import json
 from datetime import datetime
 from typing import Any, Optional
 
+from sqlalchemy import select, insert, update, desc, func
+
 from backend.app.models import (
-    CheckResult, Finding, Status, VendorSubmission,
+    CheckResult, Finding, Severity, Status, VendorSubmission,
 )
-from backend.app.storage.db import get_conn
+from backend.app.storage.db import (
+    get_conn, onboarding_case, case_check, case_finding, case_action
+)
 
 
 def _now() -> str:
@@ -39,69 +43,109 @@ def create_case(case_id: str, sub: VendorSubmission) -> None:
     key = entity_key(sub)
     vendor_token = secrets.token_urlsafe(24)
     with get_conn() as c:
-        prior = c.execute(
-            """SELECT case_id, revision FROM onboarding_case
-                WHERE entity_key = ? AND superseded_by IS NULL AND case_id != ?
-                ORDER BY created_at DESC, rowid DESC LIMIT 1""",
-            (key, case_id),
-        ).fetchone()
-        revision = (prior["revision"] + 1) if prior else 1
-        supersedes = prior["case_id"] if prior else None
+        stmt = (
+            select(onboarding_case.c.case_id, onboarding_case.c.revision)
+            .where(
+                (onboarding_case.c.entity_key == key) &
+                (onboarding_case.c.superseded_by.is_(None)) &
+                (onboarding_case.c.case_id != case_id)
+            )
+            .order_by(desc(onboarding_case.c.created_at))
+            .limit(1)
+        )
+        prior = c.execute(stmt).fetchone()
+        
+        # SQLAlchemy returns a Row which supports getattr
+        revision = (prior.revision + 1) if prior else 1
+        supersedes = prior.case_id if prior else None
 
         c.execute(
-            """INSERT INTO onboarding_case
-               (case_id, legal_name, trading_name, country, contact_email,
-                status, submission, created_at, entity_key, revision, supersedes,
-                vendor_token, profile_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (case_id, sub.legal_name, sub.trading_name, sub.country,
-             sub.contact_email, "RUNNING", sub.model_dump_json(), _now(),
-             key, revision, supersedes, vendor_token,
-             sub.profile_id or "default"),
+            insert(onboarding_case).values(
+                case_id=case_id,
+                legal_name=sub.legal_name,
+                trading_name=sub.trading_name,
+                country=sub.country,
+                contact_email=sub.contact_email,
+                status="RUNNING",
+                submission=sub.model_dump_json(),
+                created_at=_now(),
+                entity_key=key,
+                revision=revision,
+                supersedes=supersedes,
+                vendor_token=vendor_token,
+                profile_id=sub.profile_id or "default"
+            )
         )
 
 
 def append_check(case_id: str, seq: int, r: CheckResult) -> None:
     with get_conn() as c:
         c.execute(
-            """INSERT INTO case_check
-               (case_id, seq, check_name, label, summary, data, duration_ms, created_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (case_id, seq, r.check, r.label, r.summary,
-             json.dumps(r.data, default=str), r.duration_ms, _now()),
+            insert(case_check).values(
+                case_id=case_id,
+                seq=seq,
+                check_name=r.check,
+                label=r.label,
+                summary=r.summary,
+                data=json.dumps(r.data, default=str),
+                duration_ms=r.duration_ms,
+                created_at=_now()
+            )
         )
 
 
+# "Blocking" means at least NEEDS_INFO: something the vendor or a reviewer has
+# to act on. Referenced by value rather than a literal so that inserting a new
+# severity (CONDITION) cannot silently redefine what counts as blocking — which
+# is exactly what a bare `>= 2` did.
+BLOCKING_SEVERITY = int(Severity.NEEDS_INFO)
+
+
 def _blocking_codes(rows) -> set[str]:
-    return {r["code"] for r in rows if r["severity"] >= 2}
+    return {r.code for r in rows
+            if getattr(r, "severity", 0) >= BLOCKING_SEVERITY}
 
 
 def complete_case(case_id: str, status: Status, findings: list[Finding],
                   reviewer_summary: str, vendor_email: Optional[str],
                   confidence: Optional[dict] = None) -> None:
     with get_conn() as c:
-        for f in findings:
+        if findings:
             c.execute(
-                """INSERT INTO case_finding
-                   (case_id, code, severity, severity_name, check_name, field,
-                    message, vendor_message, evidence, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (case_id, f.code.value, int(f.severity), f.severity.name, f.check,
-                 f.field, f.message, f.vendor_message,
-                 json.dumps(f.evidence, default=str), _now()),
+                insert(case_finding),
+                [
+                    {
+                        "case_id": case_id,
+                        "code": f.code.value,
+                        "severity": int(f.severity),
+                        "severity_name": f.severity.name,
+                        "check_name": f.check,
+                        "field": f.field,
+                        "message": f.message,
+                        "vendor_message": f.vendor_message,
+                        "evidence": json.dumps(f.evidence, default=str),
+                        "created_at": _now()
+                    }
+                    for f in findings
+                ]
             )
 
         # --- resubmission diff, if this replaces a prior attempt
         change_summary = None
-        row = c.execute("SELECT supersedes FROM onboarding_case WHERE case_id = ?",
-                        (case_id,)).fetchone()
-        prior_id = row["supersedes"] if row else None
+        row = c.execute(
+            select(onboarding_case.c.supersedes)
+            .where(onboarding_case.c.case_id == case_id)
+        ).fetchone()
+        
+        prior_id = row.supersedes if row else None
         if prior_id:
             prior = c.execute(
-                "SELECT code, severity FROM case_finding WHERE case_id = ?", (prior_id,)
+                select(case_finding.c.code, case_finding.c.severity)
+                .where(case_finding.c.case_id == prior_id)
             ).fetchall()
             prior_codes = _blocking_codes(prior)
-            now_codes = {f.code.value for f in findings if int(f.severity) >= 2}
+            now_codes = {f.code.value for f in findings
+                         if int(f.severity) >= BLOCKING_SEVERITY}
             resolved = sorted(prior_codes - now_codes)
             new = sorted(now_codes - prior_codes)
             remaining = sorted(prior_codes & now_codes)
@@ -111,17 +155,22 @@ def complete_case(case_id: str, status: Status, findings: list[Finding],
             })
             # Mark the prior case as superseded by this one.
             c.execute(
-                "UPDATE onboarding_case SET superseded_by = ? WHERE case_id = ?",
-                (case_id, prior_id),
+                update(onboarding_case)
+                .where(onboarding_case.c.case_id == prior_id)
+                .values(superseded_by=case_id)
             )
 
         c.execute(
-            """UPDATE onboarding_case
-                  SET status = ?, reviewer_summary = ?, vendor_email = ?,
-                      completed_at = ?, change_summary = ?, confidence = ?
-                WHERE case_id = ?""",
-            (status.value, reviewer_summary, vendor_email, _now(),
-             change_summary, json.dumps(confidence or {}, default=str), case_id),
+            update(onboarding_case)
+            .where(onboarding_case.c.case_id == case_id)
+            .values(
+                status=status.value,
+                reviewer_summary=reviewer_summary,
+                vendor_email=vendor_email,
+                completed_at=_now(),
+                change_summary=change_summary,
+                confidence=json.dumps(confidence or {}, default=str)
+            )
         )
 
 
@@ -129,14 +178,11 @@ def complete_case(case_id: str, status: Status, findings: list[Finding],
 # Reviewer actions
 # ---------------------------------------------------------------------------
 
-# What each action does to the case status. The automated status is never
-# overwritten silently — the reviewer's decision is recorded as a distinct
-# resolution, and the status moves to an explicit human-decided value.
 ACTION_RESULT = {
     "approve":      ("APPROVED_BY_REVIEWER", "APPROVED"),
     "reject":       ("REJECTED_BY_REVIEWER", "REJECTED"),
     "request_info": ("PENDING_INFO", "INFO_REQUESTED"),
-    "resolve":      (None, "RESOLVED"),     # keep status, just record closure
+    "resolve":      (None, "RESOLVED"),
     "reopen":       (None, "REOPENED"),
 }
 
@@ -148,23 +194,33 @@ def record_action(case_id: str, action: str, reviewer: Optional[str],
     new_status, resolution = ACTION_RESULT[action]
 
     with get_conn() as c:
-        row = c.execute("SELECT status FROM onboarding_case WHERE case_id = ?",
-                        (case_id,)).fetchone()
+        row = c.execute(
+            select(onboarding_case.c.status)
+            .where(onboarding_case.c.case_id == case_id)
+        ).fetchone()
+        
         if not row:
             raise KeyError(case_id)
-        prev = row["status"]
+        prev = row.status
         applied = new_status or prev
 
         c.execute(
-            """INSERT INTO case_action
-               (case_id, action, reviewer, note, prev_status, new_status, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
-            (case_id, action, reviewer, note, prev, applied, _now()),
+            insert(case_action).values(
+                case_id=case_id,
+                action=action,
+                reviewer=reviewer,
+                note=note,
+                prev_status=prev,
+                new_status=applied,
+                created_at=_now()
+            )
         )
         c.execute(
-            "UPDATE onboarding_case SET status = ?, resolution = ? WHERE case_id = ?",
-            (applied, resolution, case_id),
+            update(onboarding_case)
+            .where(onboarding_case.c.case_id == case_id)
+            .values(status=applied, resolution=resolution)
         )
+        
     return {"case_id": case_id, "action": action, "prev_status": prev,
             "new_status": applied, "resolution": resolution}
 
@@ -172,38 +228,42 @@ def record_action(case_id: str, action: str, reviewer: Optional[str],
 def list_actions(case_id: str) -> list[dict[str, Any]]:
     with get_conn() as c:
         rows = c.execute(
-            "SELECT * FROM case_action WHERE case_id = ? ORDER BY id", (case_id,)
+            select(case_action)
+            .where(case_action.c.case_id == case_id)
+            .order_by(case_action.c.id)
         ).fetchall()
-    return [{"action": r["action"], "reviewer": r["reviewer"], "note": r["note"],
-             "prev_status": r["prev_status"], "new_status": r["new_status"],
-             "created_at": r["created_at"]} for r in rows]
+        
+    return [{"action": getattr(r, "action", None), 
+             "reviewer": getattr(r, "reviewer", None), 
+             "note": getattr(r, "note", None),
+             "prev_status": getattr(r, "prev_status", None), 
+             "new_status": getattr(r, "new_status", None),
+             "created_at": getattr(r, "created_at", None)} for r in rows]
 
 
 
 def fail_case(case_id: str, message: str) -> None:
     with get_conn() as c:
         c.execute(
-            "UPDATE onboarding_case SET status='ERROR', reviewer_summary=?, completed_at=? "
-            "WHERE case_id=?",
-            (message, _now(), case_id),
+            update(onboarding_case)
+            .where(onboarding_case.c.case_id == case_id)
+            .values(status='ERROR', reviewer_summary=message, completed_at=_now())
         )
 
 
 def _col(r, name, default=None):
-    """Tolerant column access — a pre-migration row may lack a column."""
-    try:
-        return r[name]
-    except (IndexError, KeyError):
-        return default
+    """Tolerant column access."""
+    val = getattr(r, name, default)
+    return val if val is not None else default
 
 
 def _row(r) -> dict[str, Any]:
     return {
-        "case_id": r["case_id"], "legal_name": r["legal_name"],
-        "trading_name": r["trading_name"], "country": r["country"],
-        "contact_email": r["contact_email"], "status": r["status"],
-        "reviewer_summary": r["reviewer_summary"], "vendor_email": r["vendor_email"],
-        "created_at": r["created_at"], "completed_at": r["completed_at"],
+        "case_id": r.case_id, "legal_name": r.legal_name,
+        "trading_name": r.trading_name, "country": r.country,
+        "contact_email": r.contact_email, "status": r.status,
+        "reviewer_summary": r.reviewer_summary, "vendor_email": r.vendor_email,
+        "created_at": r.created_at, "completed_at": r.completed_at,
         "revision": _col(r, "revision", 1),
         "supersedes": _col(r, "supersedes"),
         "superseded_by": _col(r, "superseded_by"),
@@ -218,8 +278,6 @@ def _row(r) -> dict[str, Any]:
 # Vendor-safe view (the vendor portal's ONLY data source)
 # ---------------------------------------------------------------------------
 
-# What the vendor is told per status. Deliberately vague for review/rejection —
-# the same disclosure rule the email gate enforces, applied to the portal.
 _VENDOR_STATUS = {
     "APPROVED": ("Approved", "Your onboarding is complete. No action needed."),
     "APPROVED_BY_REVIEWER": ("Approved", "Your onboarding is complete. No action needed."),
@@ -232,36 +290,32 @@ _VENDOR_STATUS = {
 
 
 def vendor_view(token: str) -> Optional[dict[str, Any]]:
-    """Everything a vendor may see about their own case — and nothing more.
-
-    Serialises ONLY vendor-safe content: the status in vendor language, the
-    NEEDS_INFO vendor_messages (the same set the email gate would send), and
-    the revision chain. Internal findings, screening results, reviewer notes
-    and evidence details are structurally absent — this function cannot leak
-    them because it never selects them.
-    """
     with get_conn() as c:
-        r = c.execute("SELECT * FROM onboarding_case WHERE vendor_token = ?",
-                      (token,)).fetchone()
+        r = c.execute(
+            select(onboarding_case).where(onboarding_case.c.vendor_token == token)
+        ).fetchone()
         if not r:
             return None
-        status = r["status"]
+            
+        status = r.status
         label, message = _VENDOR_STATUS.get(status, ("Processing", ""))
 
-        # Only vendor-facing text from NEEDS_INFO findings, and only while the
-        # case is PENDING_INFO — the same two disclosure gates as the email.
         items: list[str] = []
         if status == "PENDING_INFO":
             rows = c.execute(
-                """SELECT DISTINCT vendor_message FROM case_finding
-                    WHERE case_id = ? AND severity = 2 AND vendor_message IS NOT NULL""",
-                (r["case_id"],)).fetchall()
-            items = [x["vendor_message"] for x in rows]
+                select(case_finding.c.vendor_message).distinct()
+                .where(
+                    (case_finding.c.case_id == r.case_id) &
+                    (case_finding.c.severity == int(Severity.NEEDS_INFO)) &
+                    (case_finding.c.vendor_message.is_not(None))
+                )
+            ).fetchall()
+            items = [x.vendor_message for x in rows]
 
         return {
-            "reference": r["case_id"][:8].upper(),
-            "legal_name": r["legal_name"],
-            "submitted_at": r["created_at"],
+            "reference": r.case_id[:8].upper(),
+            "legal_name": r.legal_name,
+            "submitted_at": r.created_at,
             "status_label": label,
             "status_message": message,
             "action_needed": status == "PENDING_INFO",
@@ -269,83 +323,126 @@ def vendor_view(token: str) -> Optional[dict[str, Any]]:
             "revision": _col(r, "revision", 1),
             "superseded_by": _col(r, "superseded_by"),
             "profile_id": _col(r, "profile_id", "default"),
-            "country": r["country"],
-            # The vendor's OWN submitted data — safe to return to them (it is
-            # what they sent us; the secrets are the findings, never included).
-            "submission": json.loads(r["submission"] or "{}"),
+            "country": r.country,
+            "submission": json.loads(r.submission or "{}"),
         }
 
 
 def token_case(token: str) -> Optional[dict[str, Any]]:
     with get_conn() as c:
-        r = c.execute("SELECT case_id FROM onboarding_case WHERE vendor_token = ?",
-                      (token,)).fetchone()
-    return dict(r) if r else None
+        r = c.execute(
+            select(onboarding_case.c.case_id)
+            .where(onboarding_case.c.vendor_token == token)
+        ).fetchone()
+    return {"case_id": r.case_id} if r else None
 
 
 def get_case(case_id: str, full: bool = True) -> Optional[dict[str, Any]]:
     with get_conn() as c:
-        r = c.execute("SELECT * FROM onboarding_case WHERE case_id = ?",
-                      (case_id,)).fetchone()
+        r = c.execute(
+            select(onboarding_case).where(onboarding_case.c.case_id == case_id)
+        ).fetchone()
         if not r:
             return None
         out = _row(r)
-        out["submission"] = json.loads(r["submission"] or "{}")
+        out["submission"] = json.loads(r.submission or "{}")
         cs = _col(r, "change_summary")
         out["change_summary"] = json.loads(cs) if cs else None
         out["actions"] = list_actions(case_id)
         if full:
+            checks = c.execute(
+                select(case_check)
+                .where(case_check.c.case_id == case_id)
+                .order_by(case_check.c.seq)
+            ).fetchall()
+            
+            from backend.app.pipeline.runner import CHECK_KIND
             out["checks"] = [{
-                "seq": s["seq"], "check": s["check_name"], "label": s["label"],
-                "summary": s["summary"], "data": json.loads(s["data"]),
-                "duration_ms": s["duration_ms"],
-            } for s in c.execute(
-                "SELECT * FROM case_check WHERE case_id = ? ORDER BY seq", (case_id,))]
+                "seq": getattr(s, "seq"), "check": getattr(s, "check_name"), "label": getattr(s, "label"),
+                "summary": getattr(s, "summary"), "data": json.loads(getattr(s, "data")),
+                "duration_ms": getattr(s, "duration_ms"),
+                # How the check decided — a rule or a model. Resolved on read
+                # from the pipeline definition rather than stored, so the
+                # answer stays correct if a check is reclassified later.
+                "kind": CHECK_KIND.get(getattr(s, "check_name"), "deterministic"),
+            } for s in checks]
 
+            findings = c.execute(
+                select(case_finding)
+                .where(case_finding.c.case_id == case_id)
+                .order_by(desc(case_finding.c.severity), case_finding.c.id)
+            ).fetchall()
+            
             out["findings"] = [{
-                "code": f["code"], "severity": f["severity"],
-                "severity_name": f["severity_name"], "check": f["check_name"],
-                "field": f["field"], "message": f["message"],
-                "vendor_message": f["vendor_message"],
-                "evidence": json.loads(f["evidence"]),
-            } for f in c.execute(
-                "SELECT * FROM case_finding WHERE case_id = ? ORDER BY severity DESC, id",
-                (case_id,))]
+                "code": getattr(f, "code"), "severity": getattr(f, "severity"),
+                "severity_name": getattr(f, "severity_name"), "check": getattr(f, "check_name"),
+                "field": getattr(f, "field"), "message": getattr(f, "message"),
+                "vendor_message": getattr(f, "vendor_message"),
+                "evidence": json.loads(getattr(f, "evidence") or "{}"),
+            } for f in findings]
     return out
 
 
 def list_cases(limit: int = 200) -> list[dict[str, Any]]:
     with get_conn() as c:
         rows = c.execute(
-            "SELECT * FROM onboarding_case ORDER BY created_at DESC, rowid DESC LIMIT ?",
-            (limit,)).fetchall()
+            select(onboarding_case)
+            .order_by(desc(onboarding_case.c.created_at))
+            .limit(limit)
+        ).fetchall()
+        
         out = []
         for r in rows:
             d = _row(r)
+            
             counts = c.execute(
-                """SELECT severity_name, COUNT(*) n FROM case_finding
-                    WHERE case_id = ? GROUP BY severity_name""", (r["case_id"],)
+                select(case_finding.c.severity_name, func.count().label("n"))
+                .where(case_finding.c.case_id == r.case_id)
+                .group_by(case_finding.c.severity_name)
             ).fetchall()
-            d["finding_counts"] = {x["severity_name"]: x["n"] for x in counts}
+            
+            d["finding_counts"] = {x.severity_name: x.n for x in counts}
+            
             top = c.execute(
-                """SELECT code, message FROM case_finding WHERE case_id = ?
-                    ORDER BY severity DESC, id LIMIT 1""", (r["case_id"],)).fetchone()
-            d["top_finding"] = dict(top) if top else None
+                select(case_finding.c.code, case_finding.c.message)
+                .where(case_finding.c.case_id == r.case_id)
+                .order_by(desc(case_finding.c.severity), case_finding.c.id)
+                .limit(1)
+            ).fetchone()
+            
+            d["top_finding"] = {"code": top.code, "message": top.message} if top else None
             out.append(d)
     return out
 
 
 def stats() -> dict[str, Any]:
     with get_conn() as c:
-        by = {r["status"]: r["n"] for r in c.execute(
-            "SELECT status, COUNT(*) n FROM onboarding_case GROUP BY status")}
+        status_counts = c.execute(
+            select(onboarding_case.c.status, func.count().label("n"))
+            .group_by(onboarding_case.c.status)
+        ).fetchall()
+        by = {r.status: r.n for r in status_counts}
         total = sum(by.values())
-        avg = c.execute(
-            "SELECT AVG(t) a FROM (SELECT SUM(duration_ms) t FROM case_check GROUP BY case_id)"
-        ).fetchone()["a"]
-        top_codes = [dict(r) for r in c.execute(
-            """SELECT code, COUNT(*) n FROM case_finding
-                WHERE severity >= 2 GROUP BY code ORDER BY n DESC LIMIT 5""")]
+        
+        case_sums = (
+            select(func.sum(case_check.c.duration_ms).label("t"))
+            .group_by(case_check.c.case_id)
+            .subquery()
+        )
+        avg_res = c.execute(
+            select(func.avg(case_sums.c.t).label("a"))
+        ).fetchone()
+        
+        avg = avg_res.a if avg_res and avg_res.a else 0
+
+        top_codes_rows = c.execute(
+            select(case_finding.c.code, func.count().label("n"))
+            .where(case_finding.c.severity >= BLOCKING_SEVERITY)
+            .group_by(case_finding.c.code)
+            .order_by(desc("n"))
+            .limit(5)
+        ).fetchall()
+        top_codes = [{"code": r.code, "n": r.n} for r in top_codes_rows]
 
     decided = sum(v for k, v in by.items() if k != "RUNNING")
     auto = by.get("APPROVED", 0)

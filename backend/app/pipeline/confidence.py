@@ -128,6 +128,21 @@ def route(severity_status: Status, confidence: float, findings: list[Finding],
             f"Returned to the vendor: information is missing or malformed "
             f"(confidence {confidence:.0%}).")
 
+    # Nothing blocks onboarding, but something has to be resolved afterwards:
+    # an expiring certificate, an optional document never supplied. The vendor
+    # can transact; the condition is recorded against them and chased.
+    if severity_status is Status.APPROVED_WITH_CONDITIONS:
+        conditions = [f for f in findings if f.severity is Severity.CONDITION]
+        if confidence >= threshold:
+            return Status.APPROVED_WITH_CONDITIONS, (
+                f"Approved with {len(conditions)} condition(s) to resolve: nothing "
+                f"blocks onboarding and confidence is {confidence:.0%} "
+                f"(threshold {threshold:.0%}).")
+        return Status.PENDING_REVIEW, (
+            f"Sent to manual review: {len(conditions)} condition(s) were raised and "
+            f"confidence is only {confidence:.0%}, below the {threshold:.0%} "
+            f"threshold — too weak to attach conditions without a human.")
+
     # Nothing is wrong. Now the score decides whether we trust that enough to
     # approve without a person looking.
     if confidence >= threshold:
@@ -144,7 +159,17 @@ def route(severity_status: Status, confidence: float, findings: list[Finding],
 def recommendation(status: Status) -> str:
     return {
         Status.APPROVED: "Approve",
+        Status.APPROVED_WITH_CONDITIONS: "Approve with conditions",
         Status.REJECTED: "Reject",
         Status.PENDING_INFO: "Request more information",
         Status.PENDING_REVIEW: "Manual review",
     }[status]
+
+
+def conditions_for(findings: list[Finding]) -> list[dict]:
+    """The conditions attached to a conditional approval, for the ops report."""
+    return [
+        {"code": f.code.value, "check": f.check, "field": f.field,
+         "condition": f.message, "vendor_message": f.vendor_message}
+        for f in findings if f.severity is Severity.CONDITION
+    ]

@@ -90,9 +90,8 @@ def preflight(file_bytes: bytes, filename: str, doc_type: str,
 
 
 def _read_tmp(doc, path: Path):
-    # Reuse the reader's file logic without the data-root prefix.
     from backend.app.checks import document_reader as dr
-    return dr._read_file(path)
+    return dr._read_data(path.read_bytes(), path.suffix.lower())
 
 
 def _verdict(status: str, level: str, message: str, *, detected, filename,

@@ -26,3 +26,16 @@ pytest>=8.3
 # anthropic>=0.39
 # openai>=1.54
 # google-generativeai>=0.8
+
+# --- storage
+# SQLAlchemy Core over a SQLite file. No server to provision, no migration
+# tool to run, and the same code targets Postgres by changing DATABASE_URL if
+# a deployment ever outgrows one file.
+sqlalchemy>=2.0
+requests>=2.31
+
+# Deliberately NOT required: redis / rq (background workers), boto3 (S3),
+# psycopg2 (Postgres). Each one turns "run this app" into "provision a
+# service first". The pipeline runs in-process in well under a second, so a
+# job queue buys nothing at onboarding volumes — dozens of vendors a quarter,
+# not thousands a second. Install them only if you actually scale past that.

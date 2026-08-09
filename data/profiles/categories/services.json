@@ -1,0 +1,78 @@
+{
+  "profile_id": "category-services",
+  "name": "Services",
+  "version": 1,
+  "description": "IT, consulting, marketing, legal, accounting, security and staffing vendors. Service vendors carry engagement and data-protection risk rather than goods risk, so the asks are contractual rather than physical.",
+  "category": "services",
+  "extends": "country_defaults",
+  "fields": [
+    {
+      "key": "service_description",
+      "label": "Services provided",
+      "type": "textarea",
+      "requirement": "required",
+      "why": "We check this against your registered business activity and the category you selected.",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "engagement_model",
+      "label": "Engagement model",
+      "type": "select",
+      "requirement": "required",
+      "why": "Determines which contract template and approval threshold applies.",
+      "options": [
+        "Time & materials",
+        "Fixed price",
+        "Retainer",
+        "Managed service"
+      ],
+      "validation_source": []
+    },
+    {
+      "key": "data_access",
+      "label": "Will you access our systems or personal data?",
+      "type": "select",
+      "requirement": "required",
+      "why": "Any access to personal data triggers a data-processing agreement before work starts.",
+      "options": [
+        "No",
+        "Yes — internal systems",
+        "Yes — personal data",
+        "Yes — both"
+      ],
+      "validation_source": []
+    }
+  ],
+  "documents": [
+    {
+      "key": "professional_indemnity",
+      "label": "Professional indemnity insurance",
+      "requirement": "conditional",
+      "when": "engagement_model in ['Fixed price', 'Managed service']",
+      "why": "Fixed-price and managed engagements carry delivery risk we need covered.",
+      "expects": "A professional indemnity insurance certificate naming the business",
+      "freshness_months": 12,
+      "accepted": []
+    },
+    {
+      "key": "dpa",
+      "label": "Data processing agreement",
+      "requirement": "conditional",
+      "when": "data_access in ['Yes — personal data', 'Yes — both']",
+      "why": "Required by data-protection law before you can process personal data on our behalf.",
+      "expects": "A signed data processing agreement or equivalent data-protection addendum",
+      "accepted": []
+    },
+    {
+      "key": "iso_certification",
+      "label": "ISO / security certification",
+      "requirement": "optional",
+      "why": "Not required, but it shortens our security review considerably.",
+      "expects": "An ISO 27001, SOC 2 or equivalent certificate naming the business",
+      "accepted": []
+    }
+  ],
+  "rules": [],
+  "thresholds": {}
+}

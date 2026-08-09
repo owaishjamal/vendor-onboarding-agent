@@ -38,8 +38,14 @@ def load(f):
     return VendorSubmission(**json.loads((SUBS / f).read_text()))
 
 
+import queue
+
 def run(f):
-    events = list(run_pipeline(load(f)))
+    q = queue.Queue()
+    run_pipeline(load(f), local_queue=q)
+    events = []
+    while not q.empty():
+        events.append(q.get())
     return [e for e in events if e["type"] == "done"][0]["case"]
 
 

@@ -24,6 +24,8 @@ from typing import Optional
 import os
 
 from backend.app import config
+from backend.app.models import CATEGORY_BLURBS, CATEGORY_LABELS, VendorCategory
+from backend.app.profiles import conditions
 from backend.app.profiles.models import (
     DocSpec, FieldSpec, RequirementProfile,
 )
@@ -31,7 +33,12 @@ from backend.app.rules import load_country_rules, required_documents
 
 # Overridable so tests (and synced-folder deployments) can point profiles at
 # local disk — same pattern as VO_DB_PATH.
-PROFILE_DIR = Path(os.getenv("VO_PROFILE_DIR", str(config.DATA_DIR / "profiles")))
+#
+# Read per call rather than once at import: pytest imports test modules in an
+# arbitrary order, so a module-level constant froze whichever value happened to
+# be set first and leaked test profiles into the real data directory.
+def profile_dir() -> Path:
+    return Path(os.getenv("VO_PROFILE_DIR", str(config.DATA_DIR / "profiles")))
 
 
 # Doc-slot -> which evidence keys a slot's documents provide, for the default
@@ -83,32 +90,107 @@ def default_profile(country: str = "") -> RequirementProfile:
 
 
 def _path(profile_id: str) -> Path:
-    return PROFILE_DIR / f"{profile_id}.json"
+    return profile_dir() / f"{profile_id}.json"
 
 
-def get_profile(profile_id: Optional[str], country: str = "") -> RequirementProfile:
+def category_dir() -> Path:
+    """Where the built-in category profiles live.
+
+    Deliberately NOT under `profile_dir()`. Category profiles are shipped
+    reference data, like the country rule packs — they are versioned with the
+    code and identical in every environment. Client profiles are user data and
+    get redirected per-deployment and per-test. Conflating the two meant a test
+    that pointed profiles at a temp directory silently lost every category.
+    """
+    return Path(os.getenv("VO_CATEGORY_DIR", str(config.DATA_DIR / "profiles" / "categories")))
+
+
+def category_profile(category: Optional[str]) -> Optional[RequirementProfile]:
+    """Load the requirement profile for a vendor category, if one exists.
+
+    Categories are data. Adding a seventh is a JSON file here, not a branch
+    in the pipeline — which is the whole point of keeping category logic out
+    of the check modules.
+    """
+    if not category:
+        return None
+    p = category_dir() / f"{str(category).strip().lower()}.json"
+    if not p.exists():
+        return None
+    try:
+        return RequirementProfile(**json.loads(p.read_text()))
+    except Exception:                     # a broken category must not fail a run
+        return None
+
+
+def list_categories() -> list[dict]:
+    """Every category the system can onboard, for the intake dropdown."""
+    out = []
+    for cat in VendorCategory:
+        prof = category_profile(cat.value)
+        out.append({
+            "id": cat.value,
+            "label": CATEGORY_LABELS[cat.value],
+            "blurb": CATEGORY_BLURBS[cat.value],
+            "extra_fields": len(prof.fields) if prof else 0,
+            "extra_documents": len(prof.documents) if prof else 0,
+        })
+    return out
+
+
+def _merge(over: RequirementProfile, base: RequirementProfile) -> None:
+    """Layer `over` on top of `base`, in place. Nearer layer wins per key."""
+    seen_docs = {d.key for d in over.documents}
+    over.documents = over.documents + [d for d in base.documents if d.key not in seen_docs]
+    seen_fields = {f.key for f in over.fields}
+    over.fields = over.fields + [f for f in base.fields if f.key not in seen_fields]
+    over.rules = over.rules + base.rules
+
+
+def get_profile(profile_id: Optional[str], country: str = "",
+                category: Optional[str] = None) -> RequirementProfile:
+    """Resolve the effective requirements for one submission.
+
+    Three layers, nearest wins:
+
+        client profile  →  category profile  →  country defaults
+
+    So a client can override what a category asks for, and a category can add
+    to what a country requires, without any layer knowing about the others.
+    """
+    base = default_profile(country)
+    cat = category_profile(category)
+
     if not profile_id or profile_id == "default":
-        return default_profile(country)
+        if cat is None:
+            return base
+        _merge(cat, base)
+        cat.profile_id = "default"
+        cat.name = f"{CATEGORY_LABELS.get(str(category), 'Category')} (default)"
+        return cat
+
     p = _path(profile_id)
     if not p.exists():
-        # Unknown profile falls back to default rather than failing the run.
-        return default_profile(country)
+        # Unknown profile falls back to the category/country stack rather than
+        # failing the run.
+        return get_profile(None, country, category)
+
     prof = RequirementProfile(**json.loads(p.read_text()))
     if prof.extends == "country_defaults":
-        # Merge: country docs + custom docs; core fields + custom fields.
-        base = default_profile(country)
-        seen_docs = {d.key for d in prof.documents}
-        prof.documents = prof.documents + [d for d in base.documents if d.key not in seen_docs]
-        seen_fields = {f.key for f in prof.fields}
-        prof.fields = prof.fields + [f for f in base.fields if f.key not in seen_fields]
+        if cat is not None:
+            _merge(cat, base)
+            _merge(prof, cat)
+        else:
+            _merge(prof, base)
     return prof
 
 
 def list_profiles() -> list[dict]:
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    d = profile_dir()
+    d.mkdir(parents=True, exist_ok=True)
     out = [{"profile_id": "default", "name": "Default (country packs)", "version": 1,
             "builtin": True}]
-    for p in sorted(PROFILE_DIR.glob("*.json")):
+    for p in sorted(d.glob("*.json")):
         try:
             d = json.loads(p.read_text())
             out.append({"profile_id": d["profile_id"], "name": d.get("name", d["profile_id"]),
@@ -121,7 +203,7 @@ def list_profiles() -> list[dict]:
 def save_profile(prof: RequirementProfile) -> RequirementProfile:
     if prof.profile_id == "default":
         raise ValueError("the default profile is built-in and cannot be overwritten")
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    profile_dir().mkdir(parents=True, exist_ok=True)
     existing = _path(prof.profile_id)
     if existing.exists():
         try:
@@ -130,6 +212,49 @@ def save_profile(prof: RequirementProfile) -> RequirementProfile:
             prof.version = prof.version + 1
     existing.write_text(prof.model_dump_json(by_alias=True, indent=2))
     return prof
+
+
+def resolve_requirements(profile: RequirementProfile,
+                         submission: dict) -> dict[str, list[dict]]:
+    """Turn declared specs into the concrete asks for THIS submission.
+
+    Conditional items are evaluated against the submission, so the answer to
+    "what does this vendor owe us?" is a fact about that vendor rather than a
+    generic checklist. Items that resolve to not-applicable are returned too,
+    marked as such — an ops reviewer needs to see that a requirement was
+    considered and dismissed, not silently absent.
+    """
+    def resolve(spec) -> dict:
+        req = spec.requirement or ("required" if spec.required else "optional")
+        applies = True
+        if req == "conditional":
+            applies = conditions.evaluate(spec.when, submission)
+            effective = "required" if applies else "na"
+        elif req == "na":
+            applies, effective = False, "na"
+        else:
+            effective = req
+        return {
+            "key": spec.key,
+            "label": spec.label,
+            "declared": req,
+            "effective": effective,
+            "applies": applies,
+            "when": spec.when,
+            "when_explained": conditions.explain(spec.when),
+            "why": spec.why,
+        }
+
+    return {
+        "fields": [resolve(f) for f in profile.fields],
+        "documents": [resolve(d) for d in profile.documents],
+    }
+
+
+def required_document_keys(profile: RequirementProfile, submission: dict) -> set[str]:
+    """Just the document slots this submission actually has to supply."""
+    res = resolve_requirements(profile, submission)
+    return {d["key"] for d in res["documents"] if d["effective"] == "required"}
 
 
 def delete_profile(profile_id: str) -> bool:

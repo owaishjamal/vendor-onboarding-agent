@@ -48,13 +48,25 @@ class Severity(int, Enum):
 
     INFO = 0        # recorded, affects nothing
     ADVISORY = 1    # worth noting on the file, does not block
-    NEEDS_INFO = 2  # vendor can fix; goes into the vendor email
-    NEEDS_REVIEW = 3  # internal human judgement required; never sent to vendor
-    REJECT = 4      # terminal; no human needed to say no
+    CONDITION = 2   # onboard now, but this must be resolved (see below)
+    NEEDS_INFO = 3  # vendor can fix; goes into the vendor email
+    NEEDS_REVIEW = 4  # internal human judgement required; never sent to vendor
+    REJECT = 5      # terminal; no human needed to say no
 
 
 class Status(str, Enum):
+    """The verdict.
+
+    APPROVED_WITH_CONDITIONS is the one that stops procurement teams gaming
+    the system. Without it, a vendor whose insurance certificate expires in
+    three weeks is either waved through (and nobody ever chases it) or blocked
+    entirely (and the business bypasses procurement to get the work done).
+    Naming the condition, attaching it to the vendor record, and still letting
+    the vendor transact is what actually happens in a well-run function.
+    """
+
     APPROVED = "APPROVED"
+    APPROVED_WITH_CONDITIONS = "APPROVED_WITH_CONDITIONS"
     PENDING_INFO = "PENDING_INFO"
     PENDING_REVIEW = "PENDING_REVIEW"
     REJECTED = "REJECTED"
@@ -63,9 +75,49 @@ class Status(str, Enum):
 SEVERITY_TO_STATUS: dict[Severity, Status] = {
     Severity.INFO: Status.APPROVED,
     Severity.ADVISORY: Status.APPROVED,
+    Severity.CONDITION: Status.APPROVED_WITH_CONDITIONS,
     Severity.NEEDS_INFO: Status.PENDING_INFO,
     Severity.NEEDS_REVIEW: Status.PENDING_REVIEW,
     Severity.REJECT: Status.REJECTED,
+}
+
+# Statuses that let a vendor transact. Used by the disclosure gate and the UI.
+APPROVING_STATUSES = {Status.APPROVED, Status.APPROVED_WITH_CONDITIONS}
+
+
+class VendorCategory(str, Enum):
+    """The vendor's primary category, chosen at the start of onboarding.
+
+    This is an INPUT to requirement resolution, not a separate workflow. Every
+    category runs the identical pipeline; the category only decides which
+    fields and documents that pipeline asks for. Adding a seventh category is
+    a JSON file in data/profiles/categories/, not a code change.
+    """
+
+    GOODS = "goods"
+    SERVICES = "services"
+    CONSTRUCTION = "construction"
+    LOGISTICS = "logistics"
+    PROFESSIONAL = "professional"
+    OTHER = "other"
+
+
+CATEGORY_LABELS: dict[str, str] = {
+    VendorCategory.GOODS: "Goods / Products",
+    VendorCategory.SERVICES: "Services",
+    VendorCategory.CONSTRUCTION: "Construction / Projects",
+    VendorCategory.LOGISTICS: "Logistics / Transportation",
+    VendorCategory.PROFESSIONAL: "Professional / Individual",
+    VendorCategory.OTHER: "Other / Specialized",
+}
+
+CATEGORY_BLURBS: dict[str, str] = {
+    VendorCategory.GOODS: "Physical products, materials, equipment, inventory",
+    VendorCategory.SERVICES: "IT, consulting, marketing, legal, accounting, staffing",
+    VendorCategory.CONSTRUCTION: "Contractors, civil works, installation, interior, projects",
+    VendorCategory.LOGISTICS: "Transport, courier, freight, warehousing, delivery",
+    VendorCategory.PROFESSIONAL: "Freelancers, independent professionals, specialists",
+    VendorCategory.OTHER: "Anything that does not fit the categories above",
 }
 
 
@@ -107,6 +159,7 @@ class FindingCode(str, Enum):
 
     # --- documents
     DOCUMENT_EXPIRED = "DOCUMENT_EXPIRED"
+    DOCUMENT_EXPIRING_SOON = "DOCUMENT_EXPIRING_SOON"
     DOCUMENT_UNREADABLE = "DOCUMENT_UNREADABLE"
     DOCUMENT_LOW_CONFIDENCE = "DOCUMENT_LOW_CONFIDENCE"
     DOCUMENT_TYPE_MISMATCH = "DOCUMENT_TYPE_MISMATCH"
@@ -169,6 +222,10 @@ class Finding(BaseModel):
 class CheckResult(BaseModel):
     check: str
     label: str
+    # "deterministic" (rule/checksum/lookup) or "ai" (model judgement).
+    # Defaulted so a check that forgets to set it is treated as the stricter,
+    # more-trusted kind only when the runner says so — the runner stamps it.
+    kind: str = "deterministic"
     findings: list[Finding] = Field(default_factory=list)
     summary: str = ""
     duration_ms: int = 0
@@ -234,6 +291,12 @@ class Person(BaseModel):
 
 class VendorSubmission(BaseModel):
     submission_id: Optional[str] = None
+    # The vendor's primary category, picked at the start of onboarding. Drives
+    # which fields and documents are asked for, via the category profile.
+    category: Optional[str] = None
+    # Free-text description of what they supply. Used by the semantic check
+    # that asks whether the described business matches the chosen category.
+    business_description: Optional[str] = None
     # Which client Requirement Profile this submission answers. None/"default"
     # = the country-pack behaviour that predates profiles.
     profile_id: Optional[str] = None

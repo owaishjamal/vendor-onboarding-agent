@@ -12,6 +12,42 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_dotenv() -> None:
+    """Read backend/.env into the environment, if it exists.
+
+    Without this, putting GEMINI_API_KEY in backend/.env did nothing: every
+    setting below reads os.getenv, and no part of the app ever opened the
+    file. The app silently stayed in offline mode and the copilot answered
+    "no language model is configured" — technically true, and completely
+    baffling when you have just filled in the key.
+
+    Real environment variables always win, so a container or a CI runner that
+    sets values directly is never overridden by a stray file on disk.
+    """
+    # Both locations, nearest first. "backend/.env" is what the docs say, but
+    # the project root is where people actually put it — and a key that is
+    # silently ignored because it sits one directory up is a miserable way to
+    # lose twenty minutes. Read both; the first file to define a variable wins.
+    for env_path in (ROOT / "backend" / ".env", ROOT / ".env"):
+        if not env_path.exists():
+            continue
+        try:
+            for raw in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key and key not in os.environ:
+                    os.environ[key] = value.strip().strip('"').strip("'")
+        except OSError:
+            continue
+
+
+_load_dotenv()
+
 DATA_DIR = ROOT / "data"
 SUBMISSION_DIR = DATA_DIR / "submissions"
 SEED_DIR = ROOT / "backend" / "seed"
@@ -27,13 +63,35 @@ DB_PATH = Path(os.getenv("VO_DB_PATH", str(DATA_DIR / "cases.db")))
 
 # --- LLM -------------------------------------------------------------------
 
-# offline | anthropic | openai | gemini
-# Defaults to offline: the whole system runs, and demos, with no API key.
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "offline").lower()
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+
+def _resolve_provider() -> str:
+    """offline | anthropic | openai | gemini.
+
+    Setting a key should be enough. Requiring LLM_PROVIDER *as well* meant the
+    obvious action — paste the key in .env — left the system in offline mode
+    with no indication why, so a key is now sufficient on its own.
+
+    An explicit LLM_PROVIDER still wins, including `offline`, which is how you
+    force fixture mode for a demo or CI run even with a key present.
+    """
+    explicit = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+    if GEMINI_API_KEY:
+        return "gemini"
+    if ANTHROPIC_API_KEY:
+        return "anthropic"
+    if OPENAI_API_KEY:
+        return "openai"
+    return "offline"
+
+
+LLM_PROVIDER = _resolve_provider()
 LLM_CACHE_ENABLED = os.getenv("LLM_CACHE_ENABLED", "1") == "1"
 
 # Artificial pause between checks so the live view is readable. Presentation

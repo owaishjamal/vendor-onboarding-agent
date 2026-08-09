@@ -5,7 +5,9 @@
 #   → open http://localhost:8000
 #
 # Runs fully offline by default (LLM_PROVIDER=offline), so no API key is needed
-# for it to work. Set ANTHROPIC_API_KEY + LLM_PROVIDER=anthropic to use a model.
+# for it to work. Set GEMINI_API_KEY + LLM_PROVIDER=gemini to use a real model
+# for the vendor email and reviewer summary. The verification logic itself is
+# deterministic either way — the model only writes prose.
 
 # ---- stage 1: build the frontend -----------------------------------------
 FROM node:20-slim AS frontend

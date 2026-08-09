@@ -135,6 +135,42 @@ class CompositeProvider:
 
 
 # ---------------------------------------------------------------------------
+# Generic HTTP Adapter
+# ---------------------------------------------------------------------------
+
+class HttpRegistryAdapter:
+    """A generic HTTP JSON API adapter for registry lookups."""
+    source = "http_registry"
+
+    def __init__(self, endpoint: str, api_key: str):
+        self.endpoint = endpoint
+        self.api_key = api_key
+
+    def lookup(self, country: str, number: str) -> Optional[RegistryRecord]:
+        import urllib.request
+        import urllib.parse
+        
+        num = urllib.parse.quote(_norm(number))
+        cc = urllib.parse.quote(country.upper())
+        req = urllib.request.Request(f"{self.endpoint}?country={cc}&number={num}")
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception:
+            return None
+
+        status = (data.get("status") or "").upper()
+        return RegistryRecord(
+            legal_name=data.get("legal_name", ""),
+            status="ACTIVE" if status == "ACTIVE" else (status or "UNKNOWN"),
+            incorporation_date=data.get("incorporation_date"),
+            source="http_registry",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Selection
 # ---------------------------------------------------------------------------
 
@@ -145,4 +181,9 @@ def get_registry_provider() -> RegistryProvider:
         key = os.getenv("COMPANIES_HOUSE_API_KEY", "")
         if key:
             return CompositeProvider(CompaniesHouseProvider(key), seed)
+    elif which == "http":
+        endpoint = os.getenv("REGISTRY_ENDPOINT", "")
+        key = os.getenv("REGISTRY_API_KEY", "")
+        if endpoint:
+            return CompositeProvider(HttpRegistryAdapter(endpoint, key), seed)
     return seed
