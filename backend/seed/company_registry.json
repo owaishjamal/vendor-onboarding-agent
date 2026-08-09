@@ -68,5 +68,19 @@
     "legal_name": "Old Kiln Pottery Ltd",
     "status": "DISSOLVED",
     "incorporation_date": "2008-08-08"
+  },
+  {
+    "country": "IN",
+    "registration_number": "U74999MH2015PTC269898",
+    "legal_name": "Brightpath Consulting Services LLP",
+    "status": "ACTIVE",
+    "incorporation_date": "2015-03-11"
+  },
+  {
+    "country": "IN",
+    "registration_number": "U45200KA2012PTC066123",
+    "legal_name": "Girish Constructions Private Limited",
+    "status": "ACTIVE",
+    "incorporation_date": "2012-08-14"
   }
 ]

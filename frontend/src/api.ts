@@ -73,6 +73,27 @@ export type VendorCategory = {
   extra_documents: number;
 };
 
+/** A one-click demonstrable case. `expect` is a prediction the test suite
+ *  enforces against the real pipeline, not a scripted outcome. */
+export type Scenario = {
+  id: string;
+  kind: "happy" | "edge";
+  label: string;
+  blurb: string;
+  expect: string;
+  expect_why: string;
+  teaches: string;
+  category: string;
+};
+
+export type ScenarioDetail = Scenario & {
+  form: Record<string, any>;
+  bank: Record<string, string>;
+  custom_fields: Record<string, any>;
+  documents: { doc_type: string; filename: string; extracted: Record<string, any> }[];
+  payload: Record<string, any>;
+};
+
 export type ResolvedRequirement = {
   key: string;
   label: string;
@@ -173,6 +194,14 @@ export const api = {
       asJson<{ check: string; label: string; kind: CheckKind }[]>(r)),
 
   /** What this vendor must supply, given country + category. */
+  scenarios: () =>
+    fetch(`${BASE}/v1/scenarios`, { credentials }).then((r) =>
+      asJson<Scenario[]>(r)),
+
+  scenario: (id: string) =>
+    fetch(`${BASE}/v1/scenarios/${encodeURIComponent(id)}`, { credentials })
+      .then((r) => asJson<ScenarioDetail>(r)),
+
   requirements: (country: string, category: string, profileId = "") =>
     fetch(
       `${BASE}/v1/requirements?country=${encodeURIComponent(country)}` +

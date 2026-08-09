@@ -81,6 +81,39 @@ def run(sub: VendorSubmission) -> CheckResult:
                   "profile_shape": "custom"},
         )
 
+    # A category profile may waive a COUNTRY-PACK field, not just a document.
+    #
+    # The country pack demands a GSTIN from every Indian vendor. That is right
+    # for a company and wrong for an individual professional below the
+    # registration threshold, who has no GSTIN and cannot obtain one. Without
+    # this, such a vendor is parked in PENDING_INFO forever: the vendor cannot
+    # supply what does not exist, and no reviewer can conjure it either.
+    #
+    # A profile waives a country field by declaring it `na` — or `conditional`
+    # on something absent, which resolves to `na`. Same mechanism, same grammar
+    # and same audit trail as a waived document.
+    #
+    # ONLY the CATEGORY profile may waive, and only via `na`.
+    #
+    # Both halves of that are load-bearing. The country-defaults profile
+    # already lists tax_id as `optional` (it drives form layout, where
+    # "optional" means "not every vendor fills this in"), so honouring
+    # `optional` here — or reading the merged profile — silently dropped the
+    # GSTIN requirement for EVERY Indian vendor. That is the exact global
+    # relaxation this is supposed to make impossible: a waiver for freelancers
+    # must not become a waiver for companies. Reading the category layer alone,
+    # and only its explicit `na`, keeps the blast radius to the category that
+    # asked for it. A category that says nothing inherits the country pack
+    # unchanged.
+    _waived_fields: set[str] = set()
+    if sub.category:
+        from backend.app.profiles.store import category_profile
+        _cat = category_profile(sub.category)
+        if _cat:
+            _cat_resolved = resolve_requirements(_cat, sub.model_dump(mode="json"))
+            _waived_fields = {f["key"] for f in _cat_resolved["fields"]
+                              if f["effective"] == "na"}
+
     with Timer() as t:
         # --- universal fields
         for attr, label in UNIVERSAL_REQUIRED:
@@ -111,7 +144,7 @@ def run(sub: VendorSubmission) -> CheckResult:
 
         # --- country-specific identifiers
         tax_spec = rules.get("tax_id", {})
-        if tax_spec and not (sub.tax_id or "").strip():
+        if tax_spec and "tax_id" not in _waived_fields and not (sub.tax_id or "").strip():
             label = tax_spec.get("label", "Tax registration number")
             missing_fields.append(label)
             findings.append(finding(
@@ -124,7 +157,8 @@ def run(sub: VendorSubmission) -> CheckResult:
             ))
 
         reg_spec = rules.get("registration_number", {})
-        if reg_spec.get("required") and not (sub.registration_number or "").strip():
+        if (reg_spec.get("required") and "registration_number" not in _waived_fields
+                and not (sub.registration_number or "").strip()):
             label = reg_spec.get("label", "Company registration number")
             missing_fields.append(label)
             findings.append(finding(

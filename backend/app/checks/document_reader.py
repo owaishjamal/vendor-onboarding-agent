@@ -290,10 +290,20 @@ def read_document(doc) -> ReadResult:
     if doc.extracted:
         ex = dict(doc.extracted)
         detected = ex.get("kind")
+        # The identifier a document carries is named differently on every kind
+        # of document, and the field-verification matrix only ever asks for
+        # "<doc>.number". A PAN card, a passport, a practising licence and an
+        # insurance policy all carry an identifier that the earlier key list
+        # had no name for, so evidence for those slots could never be built and
+        # the field silently scored as UNEVIDENCED — which then dragged the
+        # confidence score below the auto-approval threshold and sent clean
+        # vendors to a human. `number` last: an explicit alias wins over it.
         fields = {
             "name": ex.get("legal_name") or ex.get("account_name") or ex.get("name"),
-            "number": ex.get("registration_number") or ex.get("tax_id")
-                      or ex.get("company_number") or ex.get("vat_number"),
+            "number": (ex.get("registration_number") or ex.get("tax_id")
+                       or ex.get("company_number") or ex.get("vat_number")
+                       or ex.get("ein") or ex.get("pan") or ex.get("licence_number")
+                       or ex.get("policy_number") or ex.get("number")),
             "issue_date": ex.get("issue_date"),
             "expiry_date": ex.get("expiry_date"),
         }

@@ -38,6 +38,24 @@
       "why": "Regulated professions (medical, legal, audit, engineering) require a current registration.",
       "options": [],
       "validation_source": []
+    },
+    {
+      "key": "registration_number",
+      "label": "Company registration number",
+      "type": "id",
+      "requirement": "na",
+      "why": "Not applicable — an individual professional has no company registration number.",
+      "options": [],
+      "validation_source": []
+    },
+    {
+      "key": "tax_id",
+      "label": "Tax registration number",
+      "type": "id",
+      "requirement": "na",
+      "why": "Not required of an individual professional. Many fall below the tax-registration threshold, and the country pack's blanket GSTIN requirement would otherwise park them in 'more information needed' forever, waiting on a number that does not exist.",
+      "options": [],
+      "validation_source": []
     }
   ],
   "documents": [

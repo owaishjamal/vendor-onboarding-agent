@@ -141,6 +141,41 @@ def categories() -> list[dict]:
     return list_categories()
 
 
+@app.get("/v1/scenarios")
+def scenarios() -> list[dict]:
+    """The demonstrable scenarios offered as one-click prefills on the form.
+
+    Catalogue only — labels, the verdict each one is expected to reach and the
+    reason it is worth showing. The values themselves come from
+    /v1/scenarios/{id}, so the menu stays small.
+    """
+    from backend.app import scenarios as scen
+    return scen.list_scenarios()
+
+
+@app.get("/v1/scenarios/{scenario_id}")
+def scenario_detail(scenario_id: str) -> dict:
+    """Form values for one scenario, ready to drop into the wizard.
+
+    Returns data, not a decision. The prefilled form is submitted through the
+    ordinary endpoint and runs the ordinary pipeline, so a scenario cannot
+    reach a verdict any other submission could not also reach.
+    """
+    from backend.app import scenarios as scen
+    s = scen.get_scenario(scenario_id)
+    if not s:
+        raise HTTPException(404, f"unknown scenario '{scenario_id}'")
+    return {
+        "id": s["id"], "label": s["label"], "kind": s["kind"],
+        "category": s["category"], "expect": s["expect"],
+        "expect_why": s["expect_why"], "teaches": s["teaches"],
+        "form": s["form"], "bank": s["bank"],
+        "custom_fields": s["custom_fields"],
+        "documents": s["documents"],
+        "payload": scen.to_submission_payload(s),
+    }
+
+
 @app.get("/v1/requirements")
 def requirements(country: str = "", category: str = "",
                  profile_id: str = "") -> dict:

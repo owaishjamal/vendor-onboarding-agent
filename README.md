@@ -1,335 +1,562 @@
 # Zamp — Vendor Onboarding & Verification
 
-**A vendor submission goes in. A decided status comes out — approved, pending, or rejected — with every reason visible and, where appropriate, a drafted reply to the vendor.**
+**A vendor submission goes in. A decided status comes out — approved, approved with conditions, pending, or rejected — with every reason visible, every decision attributable to a rule, and a drafted reply to the vendor where disclosure is appropriate.**
 
-Built for Zamp's AI Solutions Associate case study, PS-2.
-
----
-
-## The problem
-
-Before a company can pay a supplier, someone has to verify they are legitimate: company details, banking information, tax registration, compliance documents — collected, cross-checked, and confirmed to be complete, consistent and credible.
-
-In practice vendors submit incomplete forms, attach the wrong documents, and supply details that contradict each other in ways only visible when you put two fields side by side. When something is missing, someone chases it manually. The review is manual, the follow-up is manual, and the only audit trail is whatever is in somebody's inbox.
-
-A bad onboarding — a vendor who slips through with inconsistent details — causes payment fraud, compliance breaches, or both.
+Built for Zamp's AI Solutions Associate case study, **PS-2: Vendor onboarding — from submission to approval**.
 
 ---
 
-## The workflow
+## Contents
 
-1. Vendor fills the onboarding form (fields driven by the client's template).
-2. Vendor uploads the required documents — each is checked **on attach**, so a wrong file is flagged before submitting.
-3. The AI extracts data from every document and compares it against the form.
-4. An **overall confidence score** is computed from read quality, document classification, form-vs-document corroboration, and how much was left ambiguous.
-5. **High confidence + clean → Auto Approve. Disqualifying finding → Auto Reject. Anything else → Manual Review.**
-6. The reviewer opens one **verification report** — extracted vs submitted, field by field, mismatches highlighted, missing documents, confidence with its components, the AI's reasoning and its recommendation — then clicks Approve, Reject, or Request more information.
-
-Confidence can only ever move a case **towards** a human. A low score can block an auto-approval; it can never turn a flagged case into an approval.
+1. [The problem](#1-the-problem)
+2. [What it does](#2-what-it-does)
+3. [Try it in two minutes](#3-try-it-in-two-minutes)
+4. [Architecture](#4-architecture)
+5. [The decision model](#5-the-decision-model)
+6. [Generalisation: categories as data](#6-generalisation-categories-as-data)
+7. [Deterministic vs AI](#7-deterministic-vs-ai-and-why-the-line-is-drawn-where-it-is)
+8. [The nine checks](#8-the-nine-checks)
+9. [Document verification](#9-document-verification)
+10. [Edge cases](#10-edge-cases)
+11. [The ops copilot](#11-the-ops-copilot)
+12. [Design decisions and trade-offs](#12-design-decisions-and-trade-offs)
+13. [What is deliberately not built](#13-what-is-deliberately-not-built)
+14. [Testing](#14-testing)
+15. [Running and deploying](#15-running-and-deploying)
+16. [Repository map](#16-repository-map)
 
 ---
 
-## Two design decisions everything else follows from
+## 1. The problem
 
-### 1. Nothing stops early
+Before a company can pay a supplier, someone has to verify the supplier is legitimate: company details, banking information, tax registration, compliance documents — collected, cross-checked, and confirmed complete, consistent and credible.
 
-An invoice pipeline short-circuits: the moment a check is decisive, it stops. Correct there — once you know an invoice is a duplicate, nothing else matters.
+In practice vendors submit incomplete forms, attach the wrong documents, and supply details that contradict each other in ways only visible when you put two fields side by side. When something is missing, someone chases it. The review is manual, the follow-up is manual, and the audit trail is whatever is in somebody's inbox.
 
-Onboarding is the opposite. If a submission has four problems and you stop at the first, the vendor fixes one thing, resubmits, and gets told about the next. **Four round trips, days of latency each.** The entire cost of onboarding is round trips.
+A bad onboarding causes payment fraud, compliance breaches, or both. **The specific failure that costs the most money is not a missing document — it is a submission where every field is valid and the vendor is still not who they say they are.**
 
-So every check runs on every submission — even after a rejection is already certain — and the vendor receives **one message listing everything at once**.
+That observation drives most of what follows.
 
-The cost is that every submission does the full amount of work. Onboarding is dozens of vendors per quarter, not thousands per day, so that is the right trade. It would be the wrong trade for invoices.
+---
 
-### 2. Severity determines who acts, not how bad it is
+## 2. What it does
 
 ```
-status = SEVERITY_TO_STATUS[ max(severity of every finding) ]
+Vendor picks a category
+        │
+        ▼
+Sees only the fields and documents that apply to THEM      ← profile-driven, not one giant form
+        │
+        ▼
+Attaches documents — each verified on attach               ← wrong file caught before submitting
+        │
+        ▼
+Nine checks run and stream live                            ← 7 deterministic, 2 AI, labelled as such
+        │
+        ▼
+Verdict + confidence + every finding with evidence
+        │
+        ├─ APPROVED                  → onboarded, no human involved
+        ├─ APPROVED_WITH_CONDITIONS  → onboarded, obligations recorded and chased
+        ├─ PENDING_INFO              → back to the vendor, everything wrong in ONE message
+        ├─ PENDING_REVIEW            → to a human, with the conflicting evidence attached
+        └─ REJECTED                  → terminal, and the vendor is not told why
+        │
+        ▼
+Ops dashboard: full report, verification matrix, audit trail, grounded copilot
 ```
 
-That is the whole decision rule. No weighted score, no tuned threshold. Each check decides how serious its own finding is, where it has the context to judge, and the status falls out of the most serious thing present.
+---
 
-The important distinction is between the two middle severities, and it is about **who can fix it**:
+## 3. Try it in two minutes
 
-| Severity | Meaning | Goes to |
+The fastest way to understand the system is to run the prepared cases. Open the vendor form and pick one from **"Or load a prepared case"** — the form fills, you press submit, and you watch nine checks decide.
+
+Each case states the verdict it expects **before** it runs, so you are watching a prediction succeed rather than reading a narration afterwards.
+
+| Case | Category | Expected | What it shows |
+|---|---|---|---|
+| Clean goods supplier | Goods | `APPROVED` | The baseline — nine checks, no findings, no human |
+| Missing paperwork | Services | `PENDING_INFO` | Everything wrong reported in **one** message |
+| **Bank account already belongs to another vendor** | Logistics | `PENDING_REVIEW` | A perfect submission that is still fraud |
+| **Director shares a name with a sanctioned individual** | Goods | `APPROVED` | A 100% name match, correctly cleared |
+| **Director confirmed on a sanctions list** | Goods | `REJECTED` | The same machinery, opposite outcome |
+| **Individual professional, no incorporation** | Professional | `APPROVED` | Requirements that must *not* be asked for |
+| **Insurance valid today, expires in 3 weeks** | Construction | `APPROVED_WITH_CONDITIONS` | Neither pass nor fail |
+
+These are **not** mocks. Each is an ordinary set of form values submitted through the ordinary endpoint. `tests/test_scenarios.py` re-runs all seven against the real pipeline and fails the build if any stops reaching its advertised verdict — so the table above cannot quietly go stale.
+
+---
+
+## 4. Architecture
+
+### 4.1 The shape of the system
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  BROWSER                                                               │
+│                                                                        │
+│   Vendor form  ──────┐                        ┌────── Ops dashboard    │
+│   (dynamic, driven   │                        │       queue → case     │
+│    by the profile)   │                        │       report, matrix,  │
+│                      │                        │       audit, copilot   │
+└──────────────────────┼────────────────────────┼────────────────────────┘
+                       │  multipart + SSE       │  REST
+┌──────────────────────▼────────────────────────▼────────────────────────┐
+│  FastAPI  (single process — also serves the built SPA)                 │
+│                                                                        │
+│   /v1/categories   /v1/requirements   /v1/scenarios                    │
+│   /v1/cases/form/stream        ← submission, streams each check        │
+│   /v1/documents/preflight      ← one document, verified on attach      │
+│   /v1/cases/{id}  /action  /chat                                       │
+└──────────────────────┬─────────────────────────────────────────────────┘
+                       │
+┌──────────────────────▼─────────────────────────────────────────────────┐
+│  PIPELINE RUNNER                                                       │
+│                                                                        │
+│   resolve requirements  →  run 9 checks  →  aggregate findings         │
+│                                          →  severity ⇒ status          │
+│                                          →  confidence ⇒ routing       │
+│                                          →  compose vendor + ops prose │
+└───┬───────────────┬───────────────┬───────────────┬────────────────────┘
+    │               │               │               │
+┌───▼─────┐   ┌─────▼──────┐  ┌─────▼──────┐  ┌─────▼───────┐
+│ Profiles│   │  Document  │  │ Reference  │  │  LLM        │
+│ (JSON)  │   │  reader    │  │ data       │  │  Gemini or  │
+│ country │   │  text→OCR  │  │ registry   │  │  offline    │
+│ category│   │  classifier│  │ sanctions  │  │  templates  │
+│ client  │   │  DVA agent │  │ vendor mstr│  │             │
+└─────────┘   └────────────┘  └────────────┘  └─────────────┘
+                       │
+                 ┌─────▼──────┐
+                 │  SQLite    │  cases, findings, checks, audit
+                 └────────────┘
+```
+
+**One process, one database file, no queue, no broker.** That is a deliberate choice, discussed in [§12](#12-design-decisions-and-trade-offs).
+
+### 4.2 A submission, end to end
+
+```
+Vendor                 API                 Runner              Checks           Store
+  │                     │                    │                   │                │
+  ├─ pick category ────►│                    │                   │                │
+  │◄─ fields + docs ────┤ (resolved against  │                   │                │
+  │   that apply         │  country+category)│                   │                │
+  │                     │                    │                   │                │
+  ├─ attach document ──►│── preflight ──────────────────►│       │                │
+  │◄─ "that's a cover    │   classify + name check       │       │                │
+  │    letter, not ID"   │                    │           │      │                │
+  │                     │                    │                   │                │
+  ├─ submit ───────────►│── create case ─────────────────────────────────────────►│
+  │                     ├── run_pipeline ───►│                   │                │
+  │                     │                    ├─ completeness ───►│                │
+  │◄═ SSE: check result ═══════════════════════════════════════════════           │
+  │                     │                    ├─ formats ────────►│                │
+  │◄═ SSE: check result ═══════════════════════════════════════════════           │
+  │                     │                    │   … 9 checks, none short-circuits  │
+  │                     │                    │                   │                │
+  │                     │                    ├─ severity ⇒ status                 │
+  │                     │                    ├─ confidence ⇒ routing              │
+  │                     │                    ├─ compose prose ───┤                │
+  │                     │                    ├── persist ───────────────────────► │
+  │◄═ SSE: done + verdict + findings + conditions ═════════════════════           │
+```
+
+The stream matters for more than cosmetics: onboarding checks take seconds, and a vendor watching nine named checks resolve understands *what was verified*. A spinner followed by "rejected" does not build that understanding.
+
+### 4.3 Requirement resolution — three layers
+
+```
+        country defaults (in.yaml, gb.yaml, us.yaml, de.yaml, sg.yaml)
+                 │        GSTIN format, IFSC scheme, baseline documents
+                 ▼
+        category profile (goods, services, construction,
+                 │         logistics, professional, other)
+                 │        adds fields + documents; MAY WAIVE country ones
+                 ▼
+        client profile (optional per-tenant overrides)
+                 │
+                 ▼
+        resolve conditionals against THIS submission
+                 │        "carrier licence, because fleet_size > 0"
+                 ▼
+        the concrete ask for this vendor
+```
+
+Each layer only overrides what it names. A category that says nothing about `tax_id` inherits the country pack unchanged.
+
+---
+
+## 5. The decision model
+
+### 5.1 Severity determines status. That is the whole rule.
+
+```python
+status = SEVERITY_TO_STATUS[max(f.severity for f in findings)]
+```
+
+No weighting, no tuned threshold, no score to argue about. Each check decides how serious its own finding is, at the point where it has the context to judge, and the status falls out of the most serious thing present.
+
+| Severity | Meaning | Status |
 |---|---|---|
-| `ADVISORY` | Worth noting on the file | Nobody — recorded |
-| `NEEDS_INFO` | The vendor can fix this themselves | The vendor, in an email |
-| `NEEDS_REVIEW` | A human on our side must judge | Internal reviewer only |
-| `REJECT` | Terminal | Compliance |
+| `INFO` | Recorded, affects nothing | `APPROVED` |
+| `ADVISORY` | Worth knowing, not worth blocking | `APPROVED` |
+| `CONDITION` | Fine now, must be resolved later | `APPROVED_WITH_CONDITIONS` |
+| `NEEDS_INFO` | The vendor can fix this | `PENDING_INFO` |
+| `NEEDS_REVIEW` | A human must judge | `PENDING_REVIEW` |
+| `REJECT` | Terminal | `REJECTED` |
 
-A missing tax certificate and a bank account belonging to somebody else are both "not approved" — but routing them to the same place would be a serious mistake.
+`CONDITION` was inserted *between* `ADVISORY` and `NEEDS_INFO` deliberately. Because status is `max(severity)`, ordering alone guarantees the invariant: **a condition can never upgrade a case, only hold it or be overtaken by something worse.**
+
+### 5.2 Confidence is a second, one-way gate
+
+Severity answers *what is wrong*. Confidence answers *how sure are we*, and it is built from things that can be measured rather than a vibe:
+
+| Component | Weight | Measures |
+|---|---|---|
+| Form corroboration | 0.40 | How much of the form documents actually back |
+| Document read quality | 0.25 | Text layer vs marginal OCR |
+| Classification confidence | 0.15 | How sure we are each document is what it claims |
+| Certainty | 0.20 | Penalty for findings we could not resolve |
+
+```
+                       ┌── disqualifying finding? ──────────► REJECTED
+                       │
+severity status ───────┼── PENDING_REVIEW / PENDING_INFO ───► unchanged
+                       │   (a human is already involved)
+                       │
+                       └── APPROVED / _WITH_CONDITIONS
+                                    │
+                            confidence ≥ 0.85 ? ──── yes ───► as decided
+                                    │
+                                    └───────────── no ─────► PENDING_REVIEW
+```
+
+**Confidence can only ever move a case towards a human, never away from one.** A low score blocks an auto-approval; it can never turn a flagged case into an approval. Every component is reported, so a reviewer sees *why* confidence was 0.76 rather than being handed an opaque number.
+
+### 5.3 What the vendor is told
+
+Two gates, both load-bearing:
+
+1. **Status gate** — vendor-facing text is produced only for `PENDING_INFO` and `APPROVED_WITH_CONDITIONS`. Those are the two states where the vendor can *act*.
+2. **Per-finding gate** — a finding must carry an explicit `vendor_message` to be disclosed.
+
+A rejected vendor is told the application was unsuccessful and nothing more. Telling someone they matched a sanctions list is **tipping off** — a criminal offence in several jurisdictions, and it also teaches an adversary exactly which name to change. `tests/test_scenarios.py` asserts that the words "sanction", "OFAC", "denied" and "watchlist" never reach vendor-facing text.
 
 ---
 
-## The disclosure rule
+## 6. Generalisation: categories as data
 
-**A vendor email is generated only for `PENDING_INFO`.** Never for `PENDING_REVIEW`, never for `REJECTED`.
+The brief asked for a system that works beyond one vendor type. The test of that is not whether it *handles* many categories — it is whether adding one requires **shipping code**. Here it does not.
 
-This is not politeness. It is enforced in one place and covered by tests:
+A category is a JSON file:
 
-- A **rejected** vendor is rejected because of a denied-party match. Emailing them a friendly request for a bank letter tells a sanctioned party which control caught them, and opens correspondence with someone the business is legally barred from transacting with.
-- A **pending-review** vendor is under investigation for something like a bank account that does not match their name. Contacting the submitter mid-review can tip off a fraudster and taints the review.
+```json
+{
+  "category": "logistics",
+  "extends": "country_defaults",
+  "fields": [
+    { "key": "fleet_size", "type": "number", "requirement": "required",
+      "why": "Owned or contracted vehicles available for our lanes." }
+  ],
+  "documents": [
+    { "key": "carrier_licence", "requirement": "conditional",
+      "when": "fleet_size > 0",
+      "why": "Operating vehicles commercially requires a valid transport licence." }
+  ]
+}
+```
 
-So a rejected case can carry a perfectly ordinary "your bank letter is missing" finding and still send nothing at all. `VS-06` is exactly that case, and a test asserts the email stays empty.
+Four tiers: `required`, `conditional`, `optional`, `na`. Conditionals carry a `when` expression and every item carries a `why` that is shown to the vendor — *"Asked because you operate vehicles"* rather than an unexplained upload box.
 
-There is a second gate too: only `NEEDS_INFO` findings ever become vendor-facing text. Filtering on severity rather than on "does this finding happen to have a vendor message" means a `NEEDS_REVIEW` finding cannot leak into an email even if someone later attaches vendor text to one by mistake.
+**The `when` grammar is deliberately not `eval`.** It is a small parser supporting `== != >= <= > <`, `in`, `not in`, `is present`, `is absent`, joined by `and`/`or`. Anything it cannot parse evaluates to `false`, so a malformed profile asks for *less*, never executes something. Profiles are configuration; configuration that can run arbitrary code is not configuration.
+
+### Waiving, not just adding
+
+The interesting half of generalisation is **removing** requirements. The India pack demands a GSTIN from every vendor — correct for a company, wrong for a freelancer below the registration threshold who cannot obtain one. Without a waiver such a vendor is parked in `PENDING_INFO` forever: they cannot supply what does not exist, and no reviewer can conjure it.
+
+So a category profile may waive a country-pack field by declaring it `na`. Two constraints keep that safe, and both are enforced by tests:
+
+* **Only the category layer may waive**, and **only via explicit `na`**. The country-defaults profile already lists `tax_id` as `optional` for form-layout purposes; honouring `optional` here would have silently dropped the GSTIN requirement for *every* Indian vendor. That bug was written, caught by `test_a_company_in_the_same_country_is_still_asked_for_its_tax_id`, and fixed.
+* **Silence inherits.** A category that says nothing about a field gets the country pack unchanged.
 
 ---
 
-## Where the LLM is used
+## 7. Deterministic vs AI, and why the line is drawn where it is
 
-Two places. Neither of them decides anything.
+Every check declares how it decides:
 
-| Stage | Who |
+| | Deterministic | AI |
+|---|---|---|
+| **How** | Regex, checksum, set comparison, registry lookup | Reads unstructured content, makes a judgement |
+| **Reproducible** | Same input, same answer, forever | Confidence-scored, can be wrong |
+| **Testable** | To the character | Statistically, against fixtures |
+| **Count** | 7 of 9 | 2 of 9 |
+| **May alone reject** | Yes (sanctions) | **Never** |
+
+The ops report renders them in separate groups, because *"the IBAN checksum failed"* and *"the model thinks this looks like a resume"* warrant completely different levels of trust — and a reviewer who cannot tell them apart will either over-trust the model or ignore genuine signals.
+
+**An IBAN checksum does not need a language model.** Using one there would be slower, more expensive, non-reproducible and less correct. The model earns its place in exactly two places — reading documents, and judging whether a business description matches its claimed category — plus composing prose, which is a presentation concern and never touches a decision.
+
+If the model is unavailable, the pipeline still decides. `LLM_PROVIDER=offline` swaps in deterministic templates; every verdict in this README is reproducible with no API key and no network.
+
+---
+
+## 8. The nine checks
+
+None short-circuits. Every check runs on every submission, even after a rejection is certain.
+
+| # | Check | Kind | Catches |
+|---|---|---|---|
+| 1 | Completeness | deterministic | Missing fields and documents, resolved per category |
+| 2 | Format validation | deterministic | GSTIN/PAN/IFSC/IBAN/ABA shape, IBAN mod-97 checksum |
+| 3 | Cross-field consistency | deterministic | IBAN country ≠ claimed country, free-email domains, bank name mismatch |
+| 4 | Document verification | **AI** | Is this document what it claims? Whose name is on it? Has it expired? |
+| 5 | Form vs document | **AI** | Every claim corroborated, contradicted or unevidenced |
+| 6 | Client rules | deterministic | Per-tenant custom field rules |
+| 7 | Registry verification | deterministic | Does the company exist? Is it active? Does the name match? |
+| 8 | Denied-party screening | deterministic | Sanctions, two-factor on DOB + nationality |
+| 9 | Duplicates & shared banking | deterministic | Same account, registration or tax ID as an existing vendor |
+
+### Why nothing short-circuits
+
+An invoice pipeline stops at the first decisive check — correct there, because further work cannot change the answer and costs money.
+
+Onboarding is the opposite. If a submission has four problems and you stop at the first, the vendor fixes one thing, resubmits, and is told about the next. **Four round trips, days each.** The entire cost of onboarding is round trips. So every check runs, and the vendor gets one message listing everything.
+
+The cost is that every submission does full work. Onboarding volume is dozens per quarter, not thousands per day — the right trade here, and the wrong trade for invoices.
+
+---
+
+## 9. Document verification
+
+```
+file ─► read ──► classify ──► verify ──► admit as evidence
+        │         │            │
+        │         │            ├─ is it the type the slot expects?
+        │         │            ├─ does the name match the legal name?
+        │         │            ├─ has it expired? does it expire soon?
+        │         │            └─ is it stale, if freshness applies?
+        │         │
+        │         └─ content signals, not filename
+        │            ("bank_letter.pdf" containing a CV is a CV)
+        │
+        └─ PDF text layer → OCR fallback → confidence score
+```
+
+Three details worth calling out:
+
+**Freshness applies only to documents attesting to a current state.** A bank letter proves an account exists *now*; eighteen months later it proves nothing. A certificate of incorporation records a one-time event and never goes stale — demanding a "recent" one asks for something that does not exist. Blanket age limits on every document is a common and annoying onboarding failure.
+
+**Preflight runs the same agent on one file at attach time**, so a wrong document is caught before submission rather than after a full round trip.
+
+**Not recognising a document is not the same as the document being right.** Preflight originally only ran its type checks when a slot declared an accepted-types list — and category-added documents declare none, so a cover letter dropped into the photo-ID slot came back with a green tick. Unrecognised now always warns. The classifier was then taught the types the categories actually ask for, because warning on everything is as useless as approving everything.
+
+---
+
+## 10. Edge cases
+
+> *"Design and build 2–4 edge cases of your own. They should be realistic scenarios where the process has to behave differently from the happy path."*
+
+An edge case is only interesting if it is a case where **the obvious rule gives the wrong answer**. Each of these breaks a different obvious rule, and each is one click away in the form.
+
+### 10.1 Bank account already belongs to another vendor → `PENDING_REVIEW`
+
+> **Obvious rule:** every field valid → approve.
+
+Continental Freight's submission is flawless. Every format valid, every document corroborates the form, the company is in the registry, nobody is on a sanctions list. And the bank account they supplied is already on the master file under **Atlas Haulage Group Inc**.
+
+Nothing *inside* the submission is wrong. The fraud is only visible by comparing against records we already hold — this is the signature of invoice-redirection fraud, where an attacker onboards a plausible supplier whose account they control.
+
+**Why not reject?** Group treasury, a parent collecting for a subsidiary, and factoring arrangements all produce this exact pattern legitimately. Auto-rejecting breaks real suppliers; auto-approving is how money leaves. A human decides, with the conflicting record attached so it can be resolved in one sitting.
+
+*The collision is real — the account number hashes to a fingerprint already in `vendor_master.json`, not a flag set by hand.*
+
+### 10.2 Sanctions namesake → `APPROVED` (and its twin → `REJECTED`)
+
+> **Obvious rule:** name matches a sanctions list → reject.
+
+Meridian Rail's director is **Dmitri Volkov**. So is an OFAC SDN entry. A 100% name match.
+
+He is cleared, because his date of birth (1984-03-22, US) does not match the listing (1971-08-14, RU). The near-match is still written to the audit trail — *"we saw it and cleared it, here is why"* is a materially better record than never having looked.
+
+Names are not unique, especially transliterated ones. Screening on names alone means turning away legitimate suppliers because someone shares a surname with a designated person: a commercial loss and a fairness problem. Secondary identifiers are what make screening a *decision* rather than a name search.
+
+**Its twin is essential.** `sanctions-confirmed` supplies the same name with the *listed* DOB and nationality and is rejected outright — one of very few places an automated system should refuse rather than escalate, because paying a sanctioned party is a criminal offence and there is no commercial judgement to exercise. Without this second case, "we clear namesakes" is indistinguishable from "we never reject anyone".
+
+### 10.3 Individual professional, no incorporation → `APPROVED`
+
+> **Obvious rule:** vendors must supply a certificate of incorporation.
+
+Ananya Krishnan is a freelance architect. She has no certificate of incorporation, and no GSTIN — she is below the registration threshold.
+
+A one-size form demands both, and she cannot produce either. This is the single most common reason good freelancers abandon onboarding, and it also generates `PENDING_INFO` cases **no reviewer can ever resolve**. The professional profile marks incorporation `na`, waives the GSTIN, and lets her government ID stand in as proof of identity.
+
+Watch the form shrink when you load this one. That is the generalisation claim being demonstrated rather than asserted — and the waiver lives in JSON, not in an `if category == "professional"` branch.
+
+### 10.4 Insurance valid today, expires in three weeks → `APPROVED_WITH_CONDITIONS`
+
+> **Obvious rule:** expired → block; valid → pass.
+
+Girish Constructions' public liability cover is valid today and lapses in 21 days. A binary test gets this wrong in both directions: blocking a vendor whose cover is currently valid is how teams learn to route around procurement when they have a deadline; waving it through is how a contractor ends up on site next month with lapsed liability cover.
+
+So it becomes the fourth verdict — onboarded now, with the renewal recorded against the vendor, chased before the date, and disclosed to the vendor because it is one of the two states where they can act.
+
+### Why these four
+
+They cover four **distinct decision shapes**: `NEEDS_REVIEW` on clean data, `APPROVED` despite an alarming signal, `APPROVED` on a reduced requirement set, and `APPROVED_WITH_CONDITIONS`. Four variations on "a field is missing" would demonstrate nothing. `test_edge_cases_cover_distinct_verdicts` enforces this.
+
+---
+
+## 11. The ops copilot
+
+A reviewer can ask questions about a case in plain language: *"why was this flagged?"*, *"what should I ask the vendor for?"*, *"can I approve this?"*
+
+It is **grounded in the case record**. Intents are matched against the actual findings, documents and verification matrix, and answered from them. The model is only consulted for questions the grounded layer cannot match, and only ever with the case as context.
+
+**When it does not know, it says so and offers what it can answer** — rather than inventing a plausible-sounding compliance opinion. A copilot that hallucinates on a case that is about to be approved is worse than no copilot.
+
+---
+
+## 12. Design decisions and trade-offs
+
+| Decision | Why | Cost |
+|---|---|---|
+| **Nothing short-circuits** | One message to the vendor; complete picture for the reviewer | Full work on every submission — fine at onboarding volume |
+| **Severity → status, no scoring** | Auditable and arguable; every verdict traces to one finding | Less expressive than a weighted model; the right trade for compliance |
+| **Confidence is one-way** | A score can block an approval, never create one | Some clean-but-thin submissions go to a human |
+| **`CONDITION` between `ADVISORY` and `NEEDS_INFO`** | Ordering alone guarantees conditions never upgrade a case | Renumbering broke magic ints — now `BLOCKING_SEVERITY` |
+| **Categories as JSON** | New category ships no code | A schema to keep honest; mitigated by tests |
+| **Custom `when` grammar, not `eval`** | Profiles are config; config must not execute code | Small parser to maintain; unparseable ⇒ `false` |
+| **7 deterministic / 2 AI, labelled** | Reviewers must know what to trust | Two code paths to explain |
+| **Offline provider parity** | Every result reproducible with no key, no network | Templates to maintain alongside prompts |
+| **SQLite, no queue, one process** | Deploys as one container from one URL | Not horizontally scalable — see below |
+| **Documents on disk** | No object-store dependency | Ephemeral filesystems lose them on redeploy |
+| **Streamed checks (SSE)** | The vendor sees *what* was verified | Long-lived connections need idle timeouts |
+
+### On the single-process choice
+
+This is the decision most likely to be questioned, so: it is deliberate, and it is a **demo-fidelity** trade rather than a claim about production.
+
+An earlier revision had Redis, RQ workers, Postgres and S3. It was strictly worse *for the purpose this system has to serve* — it could not be handed to someone as one URL, and every reviewer who could not run `docker compose` saw nothing. The current build is one container: FastAPI serves the built SPA and the API, SQLite holds the cases, documents sit on disk.
+
+The seams that would matter are still seams. Storage is behind an interface, the registry and screening providers are adapters, the LLM client is provider-agnostic. Moving to Postgres and object storage is a configuration change at those boundaries, not a rewrite. **What is genuinely absent is horizontal scale and durable document storage** — stated plainly rather than implied otherwise.
+
+### On authentication
+
+The ops routes have **no real authentication**. The bundled `VITE_API_KEY` ships inside the JavaScript, which makes it abuse deterrence, not a credential. The vendor portal's per-case token is the closest thing to a real one, and it is unguessable but not revocable.
+
+This is a case-study build. Saying so is more useful than implying otherwise; a reviewer who assumed these endpoints were protected would draw exactly the wrong conclusion about what is production-ready.
+
+---
+
+## 13. What is deliberately not built
+
+* **Live registry / sanctions APIs.** Both sit behind provider adapters with seeded data. Swapping in GLEIF, Companies House or a Dow Jones feed is an adapter, not a redesign. Wiring live credentials would prove integration plumbing, not decision quality.
+* **A trained document model.** Extraction is text-layer-first with OCR fallback and content-signal classification. A production system pairs this with a fine-tuned or vision model. The point being demonstrated is the *cross-referencing and confidence handling*, not layout-robust OCR.
+* **Real user accounts.** Role switching is a demo mechanism.
+* **Notifications, SLA timers, bulk actions, reviewer assignment.** Real needs; none teaches anything about the verification problem.
+* **Multi-tenancy beyond profile overrides.** The profile layer is where it would go.
+
+---
+
+## 14. Testing
+
+```
+257 tests   pytest tests/ -q
+ 11/11      python scripts/evaluate.py   — 100% accuracy, 100% recall, 0 false positives
+```
+
+| Suite | Covers |
 |---|---|
-| Completeness, format, consistency, documents, screening, duplicates | **Code** |
-| The status decision | **Code** — a max over severities |
-| Drafting the email to the vendor | **LLM** |
-| Summarising the case for the reviewer | **LLM** |
+| `test_generalized.py` | Conditions grammar, category resolution, verdicts, check kinds, copilot, Gemini parsing, preflight |
+| `test_scenarios.py` | Every prepared case reaches its advertised verdict — **and why** |
+| `test_end_to_end.py` | A real uvicorn process, real multipart uploads, real SSE, all six categories |
+| `scripts/evaluate.py` | Labelled fixtures with expected outcomes; reports precision and recall |
 
-By the time either prompt runs, the status and every finding are already fixed. The model writes two documents with different audiences and different disclosure rules — which is why they are two prompts and not one.
+The scenario tests assert **mechanism, not just status**. `shared-bank-account` reaching `PENDING_REVIEW` only counts if it got there on the shared-account finding — if it started failing for a missing document, the status would still pass while the scenario stopped demonstrating anything.
+
+Several tests exist specifically to prevent regressions that already happened once:
+
+* `test_a_company_in_the_same_country_is_still_asked_for_its_tax_id` — the waiver leaking globally
+* `test_confirmed_match_does_not_tell_the_vendor_why` — tipping off
+* `test_the_waiver_is_data_not_a_branch_in_the_code` — hardcoded category logic
+* `test_scenario_documents_target_slots_the_category_actually_asks_for` — silently ignored documents
 
 ---
 
-## Design & deployment docs
+## 15. Running and deploying
 
-- **[docs/HLD.md](docs/HLD.md)** — one-page high-level design with a system diagram.
-- **[docs/Architecture.md](docs/Architecture.md)** — full component detail.
-- **[DEPLOY.md](DEPLOY.md)** — how to get a live URL, and exactly **how it behaves on new/unseen inputs**.
-
-## Document Verification Agent (DVA)
-
-Documents are handled by a dedicated agent (`backend/app/dva/`) that verifies **any** document, generalising to layouts it has never seen — because it classifies by **content**, not headings:
-
-- **Relevance** — content signals decide what a document actually is (an IBAN + account holder → bank letter; "work experience / skills / education" → a CV). A resume, invoice, or wrong certificate dropped into a required slot is flagged, not silently accepted.
-- **Consistency** — the name/number on the document is cross-referenced against the form, so a certificate describing a different company surfaces.
-- **Authenticity / currency** — readability confidence, expiry, and staleness.
-
-It runs at two points: inside the pipeline (per document), and at **submission time** — `POST /v1/documents/preflight` verifies a single file the instant it's attached, so the form shows *"This looks like a resume / CV, not a bank proof"* before the vendor ever submits. Offline by content signals; `DOC_EXTRACTOR=vision` swaps in a vision model for the classification.
-
-## Quickstart
+### Local
 
 ```bash
-make install      # python deps + npm install
-make seed         # generate reference data, test submissions, documents
+# backend
+pip install -r requirements.txt
+uvicorn backend.app.api.app:app --reload --port 8000
+
+# frontend
+cd frontend && npm install && npm run dev
 ```
 
-Two terminals for development:
+Works with **no API key** — `LLM_PROVIDER=offline` gives deterministic templates and every verdict in this document is reproducible.
+
+For the AI checks and the copilot, add a Google AI Studio key:
 
 ```bash
-make api          # backend on http://127.0.0.1:8001
-make ui           # frontend on http://127.0.0.1:5174
+echo 'GEMINI_API_KEY=your_key_here' > .env      # gitignored
+python scripts/check_env.py                      # verifies without printing the key
 ```
 
-Or run the whole product as **one URL** (the deployable shape):
+### Docker — one container, one URL
 
 ```bash
-make serve        # builds the UI and serves everything on http://127.0.0.1:8001
-# or:  make docker     (build + run the container on :8000)
+docker build -t zamp-onboarding .
+docker run -p 8000:8000 -e GEMINI_API_KEY=... zamp-onboarding
 ```
 
-For a public live link (offline, no API key needed), see **[DEPLOY.md](DEPLOY.md)** — one-click on Render via the included `render.yaml` + `Dockerfile`.
+FastAPI serves the built SPA and the API from the same origin, so there is no CORS setup and nothing to configure. See `DEPLOY.md` and `render.yaml`.
 
-Open **http://localhost:5174**.
-
-No API key required — `LLM_PROVIDER=offline` composes both documents from templates. Every check, finding, status and screen behaves identically; only the wording differs. Set `LLM_PROVIDER=anthropic` (or `openai` / `gemini`) in `.env` to use a real model.
-
-Ports are 8001/5174 so this runs alongside the PS-1 build on 8000/5173.
-
-```bash
-make test          # 127 tests
-make eval          # metrics on the 11 golden cases
-make reset         # clear case history
-```
-
-`make eval` scores the 11 labelled cases:
-
-```
-  Status accuracy .............. 11/11  (100%)
-  Auto-approve precision ....... 100%   (0 wrong auto-approvals)
-  Fraud / compliance recall .... 100%   (6/6 signal cases caught)
-  False-positive flags ......... 0
-```
-
+> **Note on free-tier quotas.** Demo seeding composes its prose offline. Eleven cases at boot previously meant twenty-two model calls before the port opened — enough to exhaust a free-tier quota and stall startup past a platform's port scan. Seeding now completes in ~3.5s even with a dead key.
 
 ---
 
-## The seven checks
-
-```
-  Submission (JSON)
-      │
-      ├─ 1  COMPLETENESS ......... required fields + required documents,
-      │                            driven by the country rule pack.
-      │                            Collects every gap, never stops at the first.
-      │
-      ├─ 2  FORMAT ............... tax ID and registration regex per country,
-      │                            IBAN mod-97 check digits (ISO 13616),
-      │                            ABA routing checksum (weighted 3-7-1),
-      │                            SWIFT/BIC, email.
-      │
-      ├─ 3  CONSISTENCY .......... legal name vs bank account holder,
-      │                            claimed country vs IBAN country,
-      │                            claimed country vs tax ID country,
-      │                            claimed country vs address country,
-      │                            email domain vs stated website.
-      │
-      ├─ 4  DOCUMENTS ............ a Document Verification Agent reads each file,
-      │                            CLASSIFIES it by content (not heading), cross-
-      │                            references name/number to the form, and checks
-      │                            it's readable + in date. A CV in a bank-proof
-      │                            slot is caught; wrong/irrelevant docs flagged.
-      │
-      ├─ 5  REGISTRY ............. confirms the registration number EXISTS, is
-      │                            active, and is registered to this name —
-      │                            against a source OUTSIDE the submission. The
-      │                            check a fabricated-but-consistent vendor fails.
-      │
-      ├─ 6  SCREENING ............ entity, trading name, every director AND the
-      │                            bank account holder against denied-party
-      │                            lists, in two confidence bands, resolved by a
-      │                            second factor (DOB / nationality).
-      │
-      └─ 7  DUPLICATES ........... bank account already held by another vendor,
-                                   duplicate registration number, duplicate tax ID.
-      │
-      ▼
-  status = max(severity)   →   vendor email (PENDING_INFO only) + reviewer summary
-```
-
-Order is presentational only — no check consumes another's output, so they could run in parallel. They are sequenced so the live view reads naturally: *is it all here, is it well formed, does it agree with itself, does the paperwork back it up, who are these people, have we seen them before.*
-
----
-
-## Rules live in YAML, not in code
-
-```
-backend/app/rules/
-  common.yaml    name-matching bands, screening thresholds, document freshness
-  us.yaml  gb.yaml  de.yaml  in.yaml  sg.yaml
-```
-
-Because the people who own these rules are not engineers. A compliance lead can open `gb.yaml`, see that a VAT number must match `^GB(\d{9}|\d{12})$`, and tell you it is wrong. They cannot do that with a regex buried in a validator.
-
-**Adding a country is adding a file.** No code change. The UI renders the packs under the Rules tab.
-
-Each pack defines the tax ID and registration formats, the payment scheme (`iban` / `aba` / `ifsc` / `swift_account`), and the required documents.
-
----
-
-## Test submissions
-
-`make seed` generates eleven submissions **and renders their documents to real files** the pipeline reads for real (one is a scanned image, to exercise OCR). **Banking details are computed, not typed** — IBAN check digits with the real mod-97 algorithm, ABA routing numbers with the real 3-7-1 checksum. Hand-typed fixtures would pass a regex and fail a real checksum, making the validators look broken when they were right.
-
-| # | Vendor | Country | Scenario | Expected |
-|---|---|---|---|---|
-| 01 | Northwind Components | US | Complete and consistent, registry-verified | `APPROVED` |
-| 02 | Brightline Analytics | GB | Missing VAT number + bank document | `PENDING_INFO` |
-| 03 | Kessler Industrietechnik | DE | **Bank account held by "K. Weber", not the company** (read off the real bank letter) | `PENDING_REVIEW` |
-| 04 | Sundara Textiles | IN | **Claims India, supplies a UK VAT number** | `PENDING_REVIEW` |
-| 05 | Continental Freight | US | **Bank account already belongs to another vendor** | `PENDING_REVIEW` |
-| 06 | Volkov Maritime | SG | **Director on a denied-party list, confirmed on DOB** | `REJECTED` |
-| 07 | Pinnacle Design | GB | IBAN checksum fails; bank letter is a scan (OCR path) | `PENDING_INFO` |
-| 08 | Meridian Rail | US | **Director shares a sanctioned name, but DOB clears the namesake** | `APPROVED` |
-| 09 | Brightline Analytics | GB | **Corrected resubmission of 02 — supersedes it, 2/2 items resolved** | `APPROVED` |
-| 10 | Harbourstone Interiors | GB | **Subtle redirection — account is "&lt;Company&gt; Holdings"** (a threshold alone misses this) | `PENDING_REVIEW` |
-| 11 | Ashcroft Medical | GB | **Internally flawless, but the registration number exists in no registry** | `PENDING_REVIEW` |
-
-### The four edge cases that carry the most weight
-
-**Bank account holder is not the company (03).** Every field is individually valid — the IBAN passes mod-97, the VAT ID is well-formed, the registration number is real. The only thing wrong is that the account holder is a person and the vendor is a company. This is the signature of payment redirection fraud, and it is invisible to any single-field validator. Internal review, and deliberately not disclosed.
-
-**Country contradiction (04).** Produces findings at *two different severities* from the same field: the GSTIN regex fails (`NEEDS_INFO`, vendor-fixable) and the tax ID is in UK format on an Indian vendor (`NEEDS_REVIEW`, needs a human). The status comes from the higher one, and the lower one is held back rather than lost. This case exists specifically to show the aggregation working.
-
-**Shared bank account (05).** The strongest fraud signal in the set, and completely invisible from the submission alone — it only exists *relative to the vendor master*. A clean-looking new supplier whose account already belongs to Atlas Haulage. Deliberately `PENDING_REVIEW` and never auto-reject: group treasury arrangements, parent companies collecting for subsidiaries, and factoring assignments all produce legitimately shared accounts. Never auto-approve, never auto-reject, always a human — with the conflicting record attached so it is resolvable in one sitting.
-
-**IBAN typo (07).** The deliberate contrast with 03. Also a banking problem, but a transposed digit is a *mistake*, not a signal — so it goes to the vendor with "this is usually a typo", not to a reviewer. Getting that triage right is the difference between a one-line correction and an accusation.
-
-**Innocent namesake (08).** A director whose name matches a UK sanctions entry *exactly*. On name alone this rejects — and that would be a legitimate supplier blocked because of a surname. A supplied date of birth and nationality differ from the listed person, so the hit clears to advisory and the vendor is approved. This is why screening runs two-factor and why the near/confirm bands exist.
-
-**Corrected resubmission (09).** Brightline (02) comes back with the missing VAT number and bank letter. The system recognises the same Companies House number, re-runs, supersedes the prior case, and shows *2 of 2 items resolved, nothing new*. This is the wait-and-recheck loop the problem statement describes — the part that's actually slow in real onboarding.
-
----
-
-## What each attachment actually does now (real document reading)
-
-Documents are no longer trusted field-blocks — every attachment is a rendered file the pipeline opens and reads:
-
-- **PDF text layer first, OCR fallback for scans** (Pinnacle's bank letter in 07 is an image and goes through OCR at a discounted confidence).
-- **Type detected from the content**, then compared to the type the vendor claimed — so a delivery note submitted as a bank letter is caught (`DOCUMENT_TYPE_MISMATCH`).
-- **Name / number / dates read off the document** and cross-referenced to the form (Kessler's bank letter in 03 genuinely reads "K. Weber").
-- **Low-confidence reads route to the vendor** for a clearer copy rather than being trusted (`DOCUMENT_LOW_CONFIDENCE`), the same never-guess principle as everything else.
-
-Pasted JSON submissions with no file fall back to a provided field-block at full confidence, so the UI's paste mode still works — the cross-referencing is identical either way.
-
----
-
-## Reviewer actions — the tool is a system of record, not a viewer
-
-The queue is no longer read-only. A reviewer can **approve, reject, request info, mark-sent, or reopen** any case. Each action:
-
-- appends to an **append-only action log** (who, when, what, and a free-text note),
-- moves the case to an explicit human-decided status (`APPROVED_BY_REVIEWER` / `REJECTED_BY_REVIEWER`) that sits *alongside* the automated finding trail, never overwriting it.
-
-This is the answer to "the only audit trail is whatever's in someone's inbox": the resolution now lives in the case.
-
----
-
-## Project layout
+## 16. Repository map
 
 ```
 backend/app/
-  models.py               severity, status, closed finding-code enum
-  config.py               infrastructure + the few genuinely global settings
-  rules/                  per-country YAML packs + loader
-  checks/
-    base.py               name normalisation and fuzzy matching
-    completeness.py       required fields and documents
-    formats.py            regex + IBAN mod-97 + ABA checksum
-    consistency.py        cross-field contradictions + subtle-name-fraud (multiset)
-    document_reader.py    reads a real file: PDF text layer / OCR + confidence
-    documents.py          attachments vs the form, type detection
-    registry.py           external existence check (fabricated vendors fail here)
-    screening.py          denied-party, two bands, DOB/nationality second factor
-    duplicates.py         shared banking and duplicate identity
-  llm/                    provider-agnostic client, prompts, offline composer
-  pipeline/runner.py      run_pipeline (persisted) + assess() (pure, for eval)
-  storage/                SQLite; checks, findings, actions all append-only
-                          + resubmission linking + reviewer-override report
-  api/app.py              FastAPI + SSE + reviewer-action + overrides endpoints
-backend/seed/             vendor master, denied parties (DOB), company registry
-frontend/src/views/       Intake, Queue (aging + overrides), CaseDetail, Rules
-frontend/src/components/  ReviewerActions, CheckTimeline, FindingCard, Badges
-scripts/build_fixtures.py generates reference data, submissions, and documents
-scripts/render_documents.py renders each document to a real PDF / scan
-scripts/evaluate.py       metrics on the 11 labelled cases
-tests/                    127 tests
+  models.py            Severity, Status, FindingCode — the vocabulary
+  scenarios.py         The prepared cases, with their expected verdicts
+  config.py            Env + .env loading, provider inference
+  api/app.py           FastAPI: endpoints, SSE, static SPA
+  pipeline/
+    runner.py          Runs 9 checks, aggregates, decides
+    confidence.py      Score components and one-way routing
+  checks/              The nine checks, one module each
+    document_reader.py Text layer → OCR → field extraction
+  dva/
+    classifier.py      Content-signal document classification
+    agent.py           Per-document verdict: type, name, expiry, freshness
+    preflight.py       Same agent, one file, at attach time
+  profiles/
+    store.py           Three-layer resolution
+    conditions.py      The safe `when` grammar
+  llm/
+    client.py          Gemini + offline, one interface
+    ops_copilot.py     Grounded intent matching
+  rules/*.yaml         Country packs
+  storage/             SQLite via SQLAlchemy Core
+
+data/profiles/categories/*.json    Six categories — the generalisation surface
+backend/seed/                      Registry, sanctions list, vendor master
+frontend/src/views/vendor/Wizard.tsx   Category → dynamic form → live run → verdict
+frontend/src/views/CaseDetail.tsx      Report, checks, documents, copilot
+tests/                             257 tests
+docs/                              PRD, Architecture, Rules, compliance matrix
 ```
 
 ---
 
-## Notes on reliability
+## In one paragraph
 
-- **Offline mode is the default.** No key, no network, no rate limit.
-- **Generated text is cached by content hash.** A rehearsed demo never re-hits the API.
-- **A check that crashes becomes a `NEEDS_REVIEW` finding**, not a silent pass. "We could not run this control" is never grounds for approval.
-- **An unsupported country never approves** — we cannot validate what we have no rules for, so we must not imply that we did.
-- **Every degradation goes toward asking a human**, never toward waving something through.
-
----
-
-## Known limitations
-
-Honest about what's still stubbed, after three rounds of work:
-
-- **The registry and denied-party lists are seeded files, not live feeds.** The registry *check* is real — a fabricated registration number fails it, and that's the structural point — but production wires it to Companies House / Handelsregister / an aggregator API and screening to a licensed provider. The adapters are the swap; the logic doesn't change.
-- **Document OCR is layout-simple.** Attachments are read for real (text layer + OCR + confidence + type detection), but the reader parses a clean labelled layout. A production reader pairs it with a vision model for arbitrary real-world documents.
-- **Reviewer actions don't send anything.** Approving or requesting info updates the case and its audit log; it doesn't actually email the vendor or write to an ERP. The decision record is real; the side effect is not wired.
-- **A client that disconnects mid-stream leaves a case stuck in `RUNNING`.** The pipeline runs on the request as a generator; production would use a background worker.
-
-### Closed across the improvement rounds
-
-Round 2: real document reading (was stubbed), two-factor screening (was name-only), reviewer actions + resolution capture (queue was read-only), resubmission handling (submissions were orphans), and a `make eval` harness.
-
-Round 3: **external registry verification** (a fabricated-but-consistent vendor no longer auto-approves — the core "verify they're legitimate" gap); **subtle-name-fraud detection** (a "…Holdings" account no longer slips a similarity threshold); **volume evaluation** on 250 generated cases including plausible fraud (replacing "100% on nine I designed"); **threshold calibration** (the magic numbers now sit on a defensible curve); a **reviewer-override report** (the captured resolutions became a live calibration signal); **regex validation tests** (the format patterns tested against real-world IDs); and **queue aging** (cases waiting on the vendor surface instead of vanishing).
+A vendor picks what they supply and is asked only for what that actually requires. Every claim is checked nine ways — seven deterministically, two with a model, and the report says which is which. The verdict is the most serious thing found, with a confidence score that can send a case to a human but never rescue one. What the vendor is told is gated separately from what the reviewer sees, because a rejected applicant should not learn why. The interesting cases are not the missing documents — they are the flawless submission using someone else's bank account, the innocent man who shares a name with a sanctioned one, the freelancer asked for a certificate that cannot exist, and the certificate that is valid today and worthless next month.

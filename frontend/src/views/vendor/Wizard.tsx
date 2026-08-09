@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  CheckResult, Finding, ResolvedRequirement, VendorCategory,
+  CheckResult, Finding, ResolvedRequirement, Scenario, VendorCategory,
   api, consumeStream, sevMeta, sevName, statusMeta,
 } from "../../api";
 
@@ -54,6 +54,15 @@ export default function Wizard() {
     fields: ResolvedRequirement[]; documents: ResolvedRequirement[];
   } | null>(null);
 
+  // Demonstrable scenarios. A prefill fills the form and nothing more — the
+  // submit path, the checks and the verdict are identical to typing it by hand.
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [loadedScenario, setLoadedScenario] = useState<Scenario | null>(null);
+  // Documents that came from a prefill: field blocks rather than real files,
+  // read through the same reader (see SubmittedDocument.extracted).
+  const [prefillDocs, setPrefillDocs] =
+    useState<{ doc_type: string; filename: string; extracted: any }[]>([]);
+
   const [plan, setPlan] = useState<{ check: string; label: string; kind: string }[]>([]);
   const [results, setResults] = useState<CheckResult[]>([]);
   const [caseData, setCaseData] = useState<any>(null);
@@ -64,7 +73,51 @@ export default function Wizard() {
     api.categories().then(setCategories).catch(() => {});
     api.countries().then((cs) => setCountries(cs.map((c: any) => ({ code: c.code, name: c.name }))))
       .catch(() => {});
+    api.scenarios().then(setScenarios).catch(() => {});
   }, []);
+
+  /** Fill the form from a scenario and drop the user on it, ready to submit. */
+  async function loadScenario(s: Scenario) {
+    try {
+      const d = await api.scenario(s.id);
+      const { bank: _b, ...formFields } = d.form as any;
+      setCategory(d.category);
+      setCountry(d.form.country || "IN");
+      setCore((prev) => ({
+        ...prev,
+        legal_name: formFields.legal_name ?? "",
+        contact_name: formFields.contact_name ?? "",
+        contact_email: formFields.contact_email ?? "",
+        address_line1: formFields.address_line1 ?? "",
+        registration_number: formFields.registration_number ?? "",
+        tax_id: formFields.tax_id ?? "",
+        pan: formFields.pan ?? "",
+        business_description: formFields.business_description ?? "",
+      }));
+      setBank({
+        account_name: d.bank.account_name ?? "", account_number: d.bank.account_number ?? "",
+        ifsc: d.bank.ifsc ?? "", iban: d.bank.iban ?? "",
+        routing_number: d.bank.routing_number ?? "",
+      });
+      setCustom(d.custom_fields ?? {});
+      // Prefilled documents arrive as field blocks, not files. Clear any real
+      // uploads so the two can never be submitted together and double-count.
+      setFiles({});
+      setPreflight({});
+      setPrefillDocs(d.documents ?? []);
+      setLoadedScenario(s);
+      setError("");
+      setStep("form");
+    } catch (e: any) {
+      setError(`Could not load that scenario: ${e.message ?? e}`);
+    }
+  }
+
+  /** Any edit to the form means it is no longer purely the scenario. */
+  function clearScenario() {
+    setLoadedScenario(null);
+    setPrefillDocs([]);
+  }
 
   // Load the requirement set whenever category or country changes.
   useEffect(() => {
@@ -126,7 +179,10 @@ export default function Wizard() {
   const missingRequired = useMemo(() => {
     const out: string[] = [];
     for (const d of neededDocs) {
-      if (d.effective === "required" && !files[d.key]) out.push(d.label);
+      // A prefilled field block counts as supplied — it is read by the same
+      // reader an uploaded file goes through, so the requirement really is met.
+      const supplied = !!files[d.key] || prefillDocs.some((p) => p.doc_type === d.key);
+      if (d.effective === "required" && !supplied) out.push(d.label);
     }
     for (const f of activeFields) {
       const req = (resolved?.fields ?? []).find((r) => r.key === f.key);
@@ -137,7 +193,7 @@ export default function Wizard() {
     if (!core.legal_name.trim()) out.push("Registered legal name");
     if (!core.contact_email.trim()) out.push("Contact email");
     return out;
-  }, [neededDocs, activeFields, files, core, custom, resolved]);
+  }, [neededDocs, activeFields, files, prefillDocs, core, custom, resolved]);
 
   function attach(key: string, file: File | null) {
     if (!file) {
@@ -157,13 +213,19 @@ export default function Wizard() {
     // race two streams onto the same view.
     if (step === "running") return;
     setError(""); setResults([]); setCaseData(null); setStep("running");
+    // Real uploads win over a prefill's field block for the same slot: if the
+    // user attached an actual file, that is the evidence we should read.
+    const uploadedTypes = new Set(Object.keys(files));
     const submission = {
       ...core, country, category,
       bank: Object.fromEntries(Object.entries(bank).filter(([, v]) => v)),
       custom_fields: custom,
-      documents: Object.entries(files).map(([doc_type, f]) => ({
-        doc_type, filename: f.name,
-      })),
+      documents: [
+        ...Object.entries(files).map(([doc_type, f]) => ({
+          doc_type, filename: f.name,
+        })),
+        ...prefillDocs.filter((d) => !uploadedTypes.has(d.doc_type)),
+      ],
     };
     try {
       const res = await api.submitForm(submission, Object.values(files));
@@ -201,7 +263,7 @@ export default function Wizard() {
           {categories.map((c) => (
             <button
               key={c.id}
-              onClick={() => { setCategory(c.id); setStep("form"); }}
+              onClick={() => { clearScenario(); setCategory(c.id); setStep("form"); }}
               className="rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-900 hover:shadow-sm"
             >
               <div className="font-semibold text-slate-900">{c.label}</div>
@@ -212,6 +274,8 @@ export default function Wizard() {
             </button>
           ))}
         </div>
+
+        {!!scenarios.length && <ScenarioPicker scenarios={scenarios} onPick={loadScenario} />}
       </div>
     );
   }
@@ -308,6 +372,10 @@ export default function Wizard() {
           change category
         </button>
       </header>
+
+      {loadedScenario && (
+        <ScenarioBanner s={loadedScenario} onClear={clearScenario} />
+      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
         <h2 className="text-sm font-semibold text-slate-800">Your business</h2>
@@ -427,6 +495,14 @@ export default function Wizard() {
               {files[d.key] && (
                 <p className="mt-1.5 truncate text-[11px] text-slate-500">{files[d.key].name}</p>
               )}
+              {!files[d.key] && prefillDocs.some((p) => p.doc_type === d.key) && (
+                <p className="mt-1.5 truncate text-[11px] text-slate-500">
+                  <span className="font-medium text-slate-700">Supplied by this example</span>
+                  {" · "}
+                  {prefillDocs.find((p) => p.doc_type === d.key)?.filename}
+                  {" — attach a file to override it."}
+                </p>
+              )}
               {pf?.checking && <p className="mt-1 text-[11px] text-slate-500">checking…</p>}
               {pf && !pf.checking && pf.message && (
                 <p className={`mt-1 text-[11px] ${
@@ -459,6 +535,101 @@ export default function Wizard() {
 }
 
 /* ---------------------------------------------------------------- bits */
+
+/**
+ * The demo shortcut: fill the form with a case worth looking at.
+ *
+ * Split into the ordinary and the interesting, because the point of the edge
+ * cases is lost if they sit in an undifferentiated list. Each one states the
+ * verdict it should reach BEFORE it is run — a claim the visitor can then
+ * watch succeed or fail, rather than a result narrated after the fact.
+ */
+function ScenarioPicker({ scenarios, onPick }: {
+  scenarios: Scenario[];
+  onPick: (s: Scenario) => void;
+}) {
+  const happy = scenarios.filter((s) => s.kind === "happy");
+  const edge = scenarios.filter((s) => s.kind === "edge");
+  return (
+    <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+      <h2 className="text-sm font-semibold text-slate-800">
+        Or load a prepared case
+      </h2>
+      <p className="mt-0.5 text-xs text-slate-600">
+        Fills the form with real data. It then runs through exactly the same
+        checks as anything typed by hand — the verdict is computed, not scripted.
+      </p>
+
+      <Group title="Straightforward" items={happy} onPick={onPick} />
+      <Group
+        title="Edge cases"
+        hint="Where the obvious rule gives the wrong answer."
+        items={edge}
+        onPick={onPick}
+      />
+    </section>
+  );
+}
+
+function Group({ title, hint, items, onPick }: {
+  title: string; hint?: string; items: Scenario[];
+  onPick: (s: Scenario) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="mt-4">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          {title}
+        </span>
+        {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {items.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => onPick(s)}
+            title={s.teaches}
+            className="rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-900"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-sm font-medium text-slate-900">{s.label}</span>
+              <StatusPill status={s.expect} />
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-slate-500">{s.blurb}</p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Shown above a prefilled form: what this case is for, and what to watch. */
+function ScenarioBanner({ s, onClear }: { s: Scenario; onClear: () => void }) {
+  return (
+    <section className="rounded-xl border border-slate-300 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="rounded bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
+              {s.kind === "edge" ? "Edge case" : "Example"}
+            </span>
+            <span className="text-sm font-semibold text-slate-900">{s.label}</span>
+          </div>
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-600">{s.teaches}</p>
+        </div>
+        <button onClick={onClear} className="shrink-0 text-[11px] text-slate-500 underline">
+          clear
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <span className="text-[11px] text-slate-500">Should come back as</span>
+        <StatusPill status={s.expect} />
+        <span className="text-[11px] text-slate-400">— {s.expect_why}</span>
+      </div>
+    </section>
+  );
+}
 
 function Field({ label, value, onChange, required, type = "text" }: {
   label: string; value: string; onChange: (v: string) => void;
