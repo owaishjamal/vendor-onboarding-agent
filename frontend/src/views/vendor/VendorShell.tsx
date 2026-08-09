@@ -56,9 +56,13 @@ export default function VendorShell() {
       animate={{ opacity: 1 }}
       transition={{ duration: 0.4 }}
     >
+      {/* `me.data` can legitimately be null here: loaded, but signed out. The
+          effect above redirects, and this renders for the one frame before it
+          fires — so fall back rather than assert. Asserting would put a crash
+          exactly where a redirect belongs. */}
       <Sidebar
-        businessName={me.data.business_name ?? "Your business"}
-        market={me.data.market ?? "SG"}
+        businessName={me.data?.business_name ?? "Your business"}
+        market={me.data?.market ?? "IN"}
         latestCase={latestCase}
       />
       <motion.main

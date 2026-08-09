@@ -280,20 +280,28 @@ export const api = {
   me: async (): Promise<Me | null> => {
     const role = localStorage.getItem("role");
     if (!role) return null;
+    const country = localStorage.getItem("country") || "IN";
     return {
       user_id: "demo", role: role as Me["role"],
       email: role === "ops" ? "ops@zamp.demo" : "vendor@zamp.demo",
       business_name: localStorage.getItem("business_name"),
-      country: localStorage.getItem("country") || "IN",
+      country, market: country,
     };
   },
-  signup: async (body: { business_name?: string; country?: string }) => {
+  // The callers pass whole form objects, password included. Narrowing the
+  // parameter type to only the fields this shim happens to read broke the
+  // build — the shape has to match what the forms actually send.
+  signup: async (body: {
+    email?: string; password?: string;
+    business_name?: string; country?: string; market?: string;
+  }) => {
     localStorage.setItem("role", "vendor");
     if (body.business_name) localStorage.setItem("business_name", body.business_name);
-    if (body.country) localStorage.setItem("country", body.country);
+    const country = body.country ?? body.market;
+    if (country) localStorage.setItem("country", country);
     return (await api.me())!;
   },
-  login: async (body: { email: string }) => {
+  login: async (body: { email: string; password?: string }) => {
     localStorage.setItem("role", body.email.includes("ops") ? "ops" : "vendor");
     return (await api.me())!;
   },
@@ -308,6 +316,9 @@ export type Me = {
   role: "vendor" | "ops";
   business_name: string | null;
   country: string;
+  /** Alias for `country`. The shell renders it as "Market"; kept so both
+   *  names resolve rather than making every caller pick one. */
+  market: string;
 };
 
 // ---------------------------------------------------------------------------
