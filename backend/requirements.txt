@@ -21,11 +21,23 @@ reportlab>=4.2             # renders the sample documents to real PDFs
 # --- tests
 pytest>=8.3
 
-# --- optional LLM providers. Install only the one you use.
-# The system runs fully without any of these (LLM_PROVIDER=offline).
-# anthropic>=0.39
-# openai>=1.54
-# google-generativeai>=0.8
+# --- LLM router (backend/app/llm/router/, docs/LLM-Router.md)
+# One HTTP client for all three providers. No provider SDKs: three SDKs means
+# three dependency trees, three auth conventions and three exception
+# hierarchies to normalise, for HTTP surfaces that are small and documented.
+httpx>=0.27
+
+# --- optional router extras. Each degrades cleanly when absent.
+#   redis             distributed rate limiting across replicas.
+#                     Without it the limiter is in-memory, which is correct
+#                     for this single-container deployment.
+#   prometheus-client /metrics. Without it the metric objects are no-ops with
+#                     identical signatures, so call sites never branch.
+#   langgraph         a real StateGraph for the agent layer. Without it the
+#                     same node functions run on a built-in executor.
+# redis>=5.0
+# prometheus-client>=0.21
+# langgraph>=0.2
 
 # --- storage
 # SQLAlchemy Core over a SQLite file. No server to provision, no migration

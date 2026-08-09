@@ -1,0 +1,213 @@
+# ---------------------------------------------------------------------------
+# Model registry
+# ---------------------------------------------------------------------------
+#
+# THIS FILE IS EXPECTED TO GO OUT OF DATE. Model IDs get renamed, free-tier
+# limits get retuned, prices move. Nothing here is load-bearing for
+# correctness: the router reads it at startup, and a wrong number degrades
+# routing quality rather than breaking the application. Everything that must
+# not drift — the decision logic — lives in Python and is tested.
+#
+# To retune limits, edit `rpm` / `tpm`. To retire a model, set `enabled:
+# false`. To add one, copy a block. No code change in any of those cases.
+#
+# Limits below are FREE-TIER figures as advertised in mid-2026 and are set
+# deliberately conservative: the cost of guessing low is a slightly early
+# failover, the cost of guessing high is a 429 on the request that mattered.
+# Paid tiers are roughly 10x — override with LLM_ROUTER_MODELS pointing at
+# your own file rather than editing this one.
+
+defaults:
+  # Consecutive failures before the breaker opens for a model.
+  failure_threshold: 3
+  # How long it stays open before one probe is allowed through.
+  cooldown_seconds: 30
+  # Ceiling on backoff between retries of the same model.
+  max_backoff_seconds: 8
+  # Retries of one model before moving to the next candidate.
+  max_retries: 2
+  request_timeout_seconds: 60
+
+# Which capabilities each task type needs. This is the indirection that keeps
+# provider names out of the application: callers ask for a TASK, the registry
+# turns that into requirements, and scoring picks whatever satisfies them.
+task_capabilities:
+  general:           []
+  reasoning:         [reasoning]
+  coding:            [coding]
+  fast:              [fast]
+  classification:    [classification]
+  long_context:      [long_context]
+  vision:            [vision]
+  tool_calling:      [tool_calling]
+  agentic:           [tool_calling, reasoning]
+  research:          [reasoning]
+  # --- vendor-onboarding tasks -------------------------------------------
+  # Compliance prose a reviewer will act on. Reasoning, not speed: this is
+  # read by a human deciding whether to pay someone.
+  reviewer_summary:  [reasoning]
+  # Vendor-facing text. Short, and its content is already decided by the
+  # disclosure gate — the model is only phrasing it.
+  vendor_email:      [fast]
+  # A reviewer waiting on an answer, over a case record that can be large.
+  ops_chat:          [reasoning, long_context]
+  # Structured extraction from document text. Wants JSON, not prose.
+  doc_extraction:    [json_mode]
+
+providers:
+
+  # -------------------------------------------------------------------------
+  # Groq — fastest tokens/sec of the three. First choice for anything
+  # interactive. Free tier is generous on requests, tight on tokens/minute.
+  # OpenAI-compatible: https://api.groq.com/openai/v1
+  # -------------------------------------------------------------------------
+  groq:
+    enabled: true
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    adapter: openai_compatible
+    models:
+
+      openai/gpt-oss-120b:
+        priority: 1
+        context_window: 131072
+        max_output_tokens: 32768
+        rpm: 30
+        tpm: 8000
+        capabilities: [reasoning, coding, tool_calling, agentic, json_mode, streaming, long_context]
+        cost_per_1m_input: 0.15
+        cost_per_1m_output: 0.75
+        enabled: true
+
+      qwen/qwen3-32b:
+        priority: 2
+        context_window: 131072
+        max_output_tokens: 16384
+        rpm: 30
+        tpm: 6000
+        capabilities: [coding, reasoning, tool_calling, json_mode, streaming, long_context]
+        cost_per_1m_input: 0.29
+        cost_per_1m_output: 0.59
+        enabled: true
+
+      llama-3.3-70b-versatile:
+        priority: 3
+        context_window: 131072
+        max_output_tokens: 32768
+        rpm: 30
+        tpm: 12000
+        capabilities: [reasoning, coding, tool_calling, json_mode, streaming, long_context]
+        cost_per_1m_input: 0.59
+        cost_per_1m_output: 0.79
+        enabled: true
+
+      llama-3.1-8b-instant:
+        # The cheap fast lane. Deliberately NOT tagged `reasoning`: it is the
+        # right model for "classify this" and the wrong one for "explain why
+        # this vendor was flagged", and the capability tags are what stop it
+        # being picked for the latter.
+        #
+        # Priority 1 despite being the smallest model here. Priority is
+        # per-candidate-set, not a quality ranking: this is only ever a
+        # candidate for tasks needing `fast` or `classification`, and within
+        # THAT set it genuinely is first choice — an order of magnitude
+        # cheaper than Gemini Flash and faster. Its capability tags, not its
+        # priority, are what keep it away from reasoning work.
+        priority: 1
+        context_window: 131072
+        max_output_tokens: 8192
+        rpm: 30
+        tpm: 6000
+        capabilities: [fast, classification, tool_calling, json_mode, streaming, long_context]
+        cost_per_1m_input: 0.05
+        cost_per_1m_output: 0.08
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Cerebras — same open-weights model as Groq's first choice, different
+  # silicon and a separate quota. That is exactly what a fallback should be:
+  # a failure on Groq (429, outage) says nothing about Cerebras, and the
+  # answer quality is comparable because it is the same weights.
+  #
+  # Free tier currently caps context at 8192 across models, which the router
+  # honours — a long ops_chat payload will not be routed here, automatically.
+  # -------------------------------------------------------------------------
+  cerebras:
+    enabled: true
+    api_key_env: CEREBRAS_API_KEY
+    base_url: https://api.cerebras.ai/v1
+    adapter: openai_compatible
+    models:
+
+      gpt-oss-120b:
+        priority: 2
+        context_window: 8192
+        max_output_tokens: 8192
+        rpm: 30
+        tpm: 60000
+        capabilities: [reasoning, coding, tool_calling, agentic, json_mode, streaming]
+        cost_per_1m_input: 0.35
+        cost_per_1m_output: 0.75
+        enabled: true
+
+      qwen-3-32b:
+        priority: 4
+        context_window: 8192
+        max_output_tokens: 8192
+        rpm: 30
+        tpm: 60000
+        capabilities: [coding, reasoning, tool_calling, json_mode, streaming]
+        cost_per_1m_input: 0.40
+        cost_per_1m_output: 0.80
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Gemini — the only one of the three with vision and a genuinely long
+  # context, so it is the sole candidate for document work regardless of
+  # priority. Native REST API; not OpenAI-shaped, hence its own adapter.
+  # -------------------------------------------------------------------------
+  gemini:
+    enabled: true
+    api_key_env: GEMINI_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    adapter: gemini
+    models:
+
+      gemini-2.5-flash:
+        priority: 2
+        context_window: 1048576
+        max_output_tokens: 65536
+        rpm: 10
+        tpm: 250000
+        capabilities: [fast, vision, multimodal, long_context, tool_calling, json_mode, streaming, reasoning]
+        cost_per_1m_input: 0.30
+        cost_per_1m_output: 2.50
+        enabled: true
+
+      gemini-2.5-flash-lite:
+        # Cheapest Gemini, and the fallback for the fast lane when Groq is
+        # rate-limited. Same reasoning as llama-3.1-8b-instant above: only a
+        # candidate for fast/classification/vision work.
+        priority: 2
+        context_window: 1048576
+        max_output_tokens: 65536
+        rpm: 15
+        tpm: 250000
+        capabilities: [fast, classification, vision, long_context, json_mode, streaming]
+        cost_per_1m_input: 0.10
+        cost_per_1m_output: 0.40
+        enabled: true
+
+      gemini-flash-latest:
+        # Moving alias. Kept as a last resort because it survives the model
+        # renames that break pinned IDs — the failure mode this whole file is
+        # warned about at the top.
+        priority: 5
+        context_window: 1048576
+        max_output_tokens: 65536
+        rpm: 10
+        tpm: 250000
+        capabilities: [fast, vision, long_context, json_mode, streaming, reasoning]
+        cost_per_1m_input: 0.30
+        cost_per_1m_output: 2.50
+        enabled: true

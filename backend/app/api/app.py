@@ -101,11 +101,25 @@ def _validate_upload(filename: str, size_bytes: int) -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "llm_provider": get_llm().provider,
+    llm = get_llm()
+    return {"status": "ok", "llm_provider": llm.provider,
+            "llm_routes_via": llm.routes_via,
             "app_title": config.APP_TITLE, "app_subtitle": config.APP_SUBTITLE,
             "llm_cache": config.LLM_CACHE_ENABLED,
             "check_delay_ms": config.CHECK_DELAY_MS,
             "countries": list(supported_countries())}
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus exposition. 404s when prometheus_client is not installed,
+    which is the honest answer — an empty 200 would look like zero traffic."""
+    try:
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+    except ImportError:
+        raise HTTPException(404, "prometheus_client is not installed")
+    from fastapi import Response
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/v1/checks")
@@ -233,6 +247,30 @@ def require_api_key(api_key: str = Security(api_key_header)):
     if not hmac.compare_digest(api_key, expected_key):
         raise HTTPException(status_code=403, detail="Invalid API Key")
     return api_key
+
+
+@app.get("/v1/llm/health", dependencies=[Depends(require_api_key)])
+async def llm_health() -> dict:
+    """Per-model routing state: health, breaker, rate-limit windows, spend.
+
+    Guarded, because it names every configured model and its live limits —
+    useful to an operator, and a free map of the deployment to anyone else.
+    It reveals no credentials: keys are read from the environment inside the
+    adapters and never enter a request, a response or a log line.
+
+    Defined here rather than beside /health because `require_api_key` is
+    declared just above; referencing it earlier is a NameError at import, and
+    uvicorn reports that as "server died on startup" with the real cause forty
+    frames down.
+    """
+    llm = get_llm()
+    router = getattr(llm, "router", None)
+    if router is None:
+        return {"mode": "offline",
+                "detail": "No LLM router is active; the app is on templates.",
+                "reason": "no provider API key is configured"}
+    return {"mode": "router", **await router.health_report()}
+
 
 # ---------------------------------------------------------------------------
 # Cases

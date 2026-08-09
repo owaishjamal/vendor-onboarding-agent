@@ -327,68 +327,107 @@ def _drain(q: "queue.Queue[dict]") -> dict:
 # no text at all. These pin each of those shapes.
 # ===========================================================================
 
-def _gemini():
-    import os
-    os.environ.setdefault("GEMINI_API_KEY", "test-key")
-    from backend.app.llm.client import GeminiClient
-    return GeminiClient
+def _gemini_provider():
+    """The Gemini adapter, constructed without touching the network.
+
+    These tests moved with the code: the parsing and thinkingConfig behaviours
+    they pin now live in the router's Gemini adapter rather than in a
+    per-provider client. The behaviours are unchanged — they were all learned
+    against the live API and each one cost a real bug — so the tests follow
+    them rather than being deleted.
+    """
+    from backend.app.llm.router.providers.gemini import GeminiProvider
+    return GeminiProvider(base_url="https://example.invalid/v1beta",
+                          api_key_env="GEMINI_API_KEY_FOR_TESTS")
+
+
+def _spec(name="test-model"):
+    from backend.app.llm.router.model_registry import ModelSpec
+    return ModelSpec(provider="gemini", name=name, max_output_tokens=65536)
 
 
 def test_gemini_joins_every_text_part():
     """A multi-part answer must not be truncated to its first fragment."""
-    out = _gemini()._text_from({"candidates": [{"content": {"parts": [
-        {"text": "Part one."}, {"text": "Part two."}]}, "finishReason": "STOP"}]})
-    assert "Part one." in out and "Part two." in out
+    out = _gemini_provider()._parse({"candidates": [{"content": {"parts": [
+        {"text": "Part one."}, {"text": "Part two."}]}, "finishReason": "STOP"}]},
+        _spec())
+    assert "Part one." in out.text and "Part two." in out.text
 
 
 def test_gemini_never_returns_the_models_private_thinking():
     """The reviewer must see the answer, not the plan for the answer."""
-    out = _gemini()._text_from({"candidates": [{"content": {"parts": [
+    out = _gemini_provider()._parse({"candidates": [{"content": {"parts": [
         {"text": "Structure: be brief, cite finding codes.", "thought": True},
         {"text": "The vendor is pending review on BANK_NAME_MISMATCH."},
-    ]}, "finishReason": "STOP"}]})
-    assert out == "The vendor is pending review on BANK_NAME_MISMATCH."
-    assert "Structure:" not in out
+    ]}, "finishReason": "STOP"}]}, _spec())
+    assert out.text == "The vendor is pending review on BANK_NAME_MISMATCH."
+    assert "Structure:" not in out.text
 
 
 @pytest.mark.parametrize("payload,expect", [
     ({"candidates": [{"content": {}, "finishReason": "MAX_TOKENS"}]}, "output limit"),
     ({"candidates": [{"content": {}, "finishReason": "SAFETY"}]}, "safety"),
-    ({"promptFeedback": {"blockReason": "OTHER"}}, "no candidates"),
+    ({"promptFeedback": {"blockReason": "OTHER"}}, "blocked the prompt"),
 ])
 def test_gemini_explains_an_empty_response_instead_of_crashing(payload, expect):
     """A stack trace is a useless answer to "why was this vendor flagged?"."""
-    with pytest.raises(RuntimeError, match=expect):
-        _gemini()._text_from(payload)
+    from backend.app.llm.router.schemas import LLMError
+    with pytest.raises(LLMError, match=expect):
+        _gemini_provider()._parse(payload, _spec())
 
 
-_INVALID_ARG = ('Gemini HTTP 400: {"error": {"code": 400, "message": '
+def test_gemini_surfaces_tool_calls():
+    """Function calls must not be mistaken for an empty response."""
+    out = _gemini_provider()._parse({"candidates": [{"content": {"parts": [
+        {"functionCall": {"name": "search_web", "args": {"q": "zamp"}}}]},
+        "finishReason": "STOP"}]}, _spec())
+    assert len(out.tool_calls) == 1
+    assert out.tool_calls[0].name == "search_web"
+    assert out.tool_calls[0].arguments == {"q": "zamp"}
+
+
+_INVALID_ARG = ('HTTP 400: {"error": {"code": 400, "message": '
                 '"Request contains an invalid argument.", "status": "INVALID_ARGUMENT"}}')
 
 
-def _sim_client(reject_thinking: bool):
-    """A Gemini client whose transport is recorded instead of sent."""
-    G = _gemini()
-    G._supports_thinking_config = True          # reset the per-process memo
+def _sim_provider(reject_thinking: bool):
+    """A Gemini adapter whose transport is recorded instead of sent."""
+    from backend.app.llm.router.providers.gemini import GeminiProvider
+    from backend.app.llm.router.schemas import LLMResponse, PermanentError
 
-    class Sim(G):
+    GeminiProvider._thinking_ok.pop("test-model", None)   # reset the per-process memo
+
+    class Sim(GeminiProvider):
         def __init__(self):
-            self.api_key, self.model, self.calls = "k", "test-model", []
+            super().__init__(base_url="https://example.invalid/v1beta",
+                             api_key_env="UNSET_FOR_TESTS")
+            self.calls = []
 
-        def _post(self, gen, system, user):
-            self.calls.append(gen)
-            if reject_thinking and "thinkingConfig" in gen:
-                raise RuntimeError(_INVALID_ARG)
-            return "answer"
+        async def _post(self, spec, messages, tools, max_tokens, temperature,
+                        timeout, *, thinking):
+            body = self._body(spec, messages, tools, max_tokens, temperature,
+                              thinking=thinking)
+            self.calls.append(body["generationConfig"])
+            if reject_thinking and "thinkingConfig" in body["generationConfig"]:
+                raise PermanentError(_INVALID_ARG, status_code=400)
+            return LLMResponse(text="answer", provider="gemini", model=spec.name)
 
     return Sim()
+
+
+def _gen(provider, max_tokens=4096):
+    import asyncio
+    from backend.app.llm.router.schemas import Message
+    return asyncio.run(provider.generate(
+        spec=_spec(), messages=[Message(role="user", content="q")],
+        max_tokens=max_tokens))
 
 
 def test_thinking_is_disabled_where_the_model_supports_it():
     """Reasoning tokens are billed against maxOutputTokens, so a thinking
     model spends the budget planning and the answer arrives truncated."""
-    c = _sim_client(reject_thinking=False)
-    assert c._complete("sys", "q", 4096) == "answer"
+    c = _sim_provider(reject_thinking=False)
+    assert _gen(c).text == "answer"
     assert c.calls[0]["thinkingConfig"] == {"thinkingBudget": 0}
 
 
@@ -396,43 +435,47 @@ def test_a_model_that_rejects_thinking_config_still_answers():
     """`gemini-flash-latest` returns a bare 400 INVALID_ARGUMENT for
     thinkingConfig — with no clue which argument is at fault. Sending it must
     not take the copilot down."""
-    c = _sim_client(reject_thinking=True)
-    assert c._complete("sys", "q", 4096) == "answer"
+    c = _sim_provider(reject_thinking=True)
+    assert _gen(c).text == "answer"
     assert "thinkingConfig" in c.calls[0]        # tried
     assert "thinkingConfig" not in c.calls[1]    # then fell back
 
 
 def test_the_unsupported_model_is_remembered_not_re_probed():
     """Otherwise every single call pays for two round trips."""
-    c = _sim_client(reject_thinking=True)
-    c._complete("sys", "q", 4096)
+    c = _sim_provider(reject_thinking=True)
+    _gen(c)
     c.calls.clear()
-    c._complete("sys", "q", 4096)
+    _gen(c)
     assert len(c.calls) == 1 and "thinkingConfig" not in c.calls[0]
 
 
 def test_an_unrelated_400_is_not_swallowed_by_the_fallback():
     """A rejected API key must surface, not be retried into a different error."""
-    G = _gemini()
-    G._supports_thinking_config = True
+    import asyncio
+    from backend.app.llm.router.providers.gemini import GeminiProvider
+    from backend.app.llm.router.schemas import Message, PermanentError
 
-    class Hard(G):
+    GeminiProvider._thinking_ok.pop("test-model", None)
+
+    class Hard(GeminiProvider):
         def __init__(self):
-            self.api_key, self.model = "k", "test-model"
+            super().__init__(base_url="https://example.invalid",
+                             api_key_env="UNSET_FOR_TESTS")
 
-        def _post(self, gen, system, user):
-            raise RuntimeError("Gemini HTTP 400: API key not valid")
+        async def _post(self, *a, **kw):
+            raise PermanentError("HTTP 400: API key not valid", status_code=400)
 
-    with pytest.raises(RuntimeError, match="API key not valid"):
-        Hard()._complete("sys", "q", 1024)
+    with pytest.raises(PermanentError, match="API key not valid"):
+        asyncio.run(Hard().generate(spec=_spec(),
+                                    messages=[Message(role="user", content="q")]))
 
 
 def test_the_output_ceiling_is_never_below_the_floor():
     """800 tokens truncated a grounded answer citing findings."""
-    c = _sim_client(reject_thinking=False)
-    c._complete("sys", "q", 100)
+    c = _sim_provider(reject_thinking=False)
+    _gen(c, max_tokens=100)
     assert c.calls[0]["maxOutputTokens"] >= 1024
-
 
 @pytest.mark.parametrize("question", [
     "hi", "hello", "what was the issue", "what issue did u cought",

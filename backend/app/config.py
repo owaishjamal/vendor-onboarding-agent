@@ -67,27 +67,40 @@ LLM_MODEL = os.getenv("LLM_MODEL", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+
+# Redis for distributed rate limiting. Unset means the in-memory limiter,
+# which is correct for the single-process deployment this ships as; set it
+# when running more than one replica against a shared quota.
+LLM_ROUTER_REDIS_URL = os.getenv("LLM_ROUTER_REDIS_URL", "")
 
 
 def _resolve_provider() -> str:
-    """offline | anthropic | openai | gemini.
+    """offline | router.
 
-    Setting a key should be enough. Requiring LLM_PROVIDER *as well* meant the
-    obvious action — paste the key in .env — left the system in offline mode
-    with no indication why, so a key is now sufficient on its own.
+    Provider selection moved into the LLM router: with three providers and a
+    fallback chain, "which provider?" is a per-request decision made from live
+    rate-limit and health state, not a process-wide constant. This function now
+    answers only the one question that remains global — is there any credential
+    at all, or do we run on templates?
 
-    An explicit LLM_PROVIDER still wins, including `offline`, which is how you
-    force fixture mode for a demo or CI run even with a key present.
+    Setting a key is sufficient. Requiring LLM_PROVIDER *as well* meant the
+    obvious action — paste a key in .env — left the system in offline mode with
+    no indication why.
+
+    An explicit LLM_PROVIDER=offline still wins, which is how a demo or CI run
+    is forced onto templates with keys present. Legacy values (gemini, openai,
+    anthropic) are accepted and mean "use the router": naming one provider no
+    longer pins the request to it, because pinning would give up the failover
+    that is the entire point.
     """
     explicit = os.getenv("LLM_PROVIDER", "").strip().lower()
-    if explicit:
-        return explicit
-    if GEMINI_API_KEY:
-        return "gemini"
-    if ANTHROPIC_API_KEY:
-        return "anthropic"
-    if OPENAI_API_KEY:
-        return "openai"
+    if explicit == "offline":
+        return "offline"
+    if any((GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY,
+            ANTHROPIC_API_KEY, OPENAI_API_KEY)):
+        return "router"
     return "offline"
 
 
