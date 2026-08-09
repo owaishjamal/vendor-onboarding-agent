@@ -1,14 +1,20 @@
-# One-click deploy to Render (https://render.com) — free tier works.
+# One-click deploy to Render (https://render.com). The free plan is enough.
 #
-# Push this repo to GitHub, then in Render: New → Blueprint → pick the repo.
-# Render reads this file, builds the Dockerfile, and gives you a public URL.
+#   1. Push this repo to GitHub.
+#   2. Render -> New -> Blueprint -> pick the repo.
+#   3. Add GEMINI_API_KEY in the dashboard (Environment tab) if you want the
+#      AI-written vendor emails, reviewer summaries and open-ended copilot
+#      answers. Everything else — all nine checks and the verdict — is
+#      deterministic and runs without any key.
 #
-# To use a real LLM instead of the offline composer, add GEMINI_API_KEY in the
-# Render dashboard and set LLM_PROVIDER=gemini.
+# One service, one URL: the image builds the React app and FastAPI serves it
+# alongside the API, so there is no separate frontend to deploy or CORS to
+# configure.
 #
-# NOTE: the free plan has an ephemeral filesystem — the SQLite case history is
-# wiped on every restart/redeploy. SEED_DEMO_CASES=1 re-runs the labelled
-# submissions on a cold start so the dashboard is never empty for a visitor.
+# NOTE: the free plan has an ephemeral filesystem, so the SQLite case history
+# is wiped on every restart and redeploy. SEED_DEMO_CASES=1 re-runs the
+# labelled submissions on a cold start, so a visitor never lands on an empty
+# dashboard. Attach a disk if you need history to survive.
 
 services:
   - type: web
@@ -16,11 +22,15 @@ services:
     runtime: docker
     dockerfilePath: ./Dockerfile
     plan: free
+    healthCheckPath: /health
     envVars:
-      - key: LLM_PROVIDER
-        value: offline
+      # Pace the live run view so a viewer can watch each check land.
+      # Set to 0 for real throughput.
       - key: CHECK_DELAY_MS
         value: "250"
       - key: SEED_DEMO_CASES
         value: "1"
-    healthCheckPath: /health
+      # Paste your Google AI Studio key here in the dashboard, or leave it
+      # unset to run entirely on the deterministic path.
+      - key: GEMINI_API_KEY
+        sync: false

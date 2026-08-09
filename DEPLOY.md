@@ -1,108 +1,120 @@
-# Deploy — getting a working link
+# Deploying
 
-The submission asks for a **live, runnable link**. The whole product is one
-container (React app served by the FastAPI process), runs **offline with no API
-key**, and exposes a single URL. Pick whichever path fits.
+**One service, one URL.** The Docker image builds the React app and FastAPI
+serves it alongside the API from the same origin. There is no separate
+frontend to deploy, no CORS to configure, and nothing to provision first — no
+database server, no Redis, no object store. State is a SQLite file; documents
+are on local disk.
+
+That was a deliberate choice. At onboarding volumes — dozens of vendors a
+quarter, and a sub-second pipeline — a queue and a managed database buy
+nothing but services to keep alive.
 
 ---
 
-## Option A — Render (recommended, free, gives a public URL)
+## Render (recommended, free)
 
-1. Push this folder to a GitHub repo.
-2. On [render.com](https://render.com): **New → Blueprint**, pick the repo.
-   Render reads `render.yaml`, builds the `Dockerfile`, and deploys.
-3. You get a URL like `https://vendor-onboarding-xxxx.onrender.com`. That's the
-   link you submit. `/health` is the health check.
+1. Push the repo to GitHub.
+2. In Render: **New → Blueprint**, pick the repo. It reads `render.yaml`.
+3. **Environment → Add** `GEMINI_API_KEY` (optional, see below).
+4. Wait for the build. You get `https://<name>.onrender.com`. Send that link.
 
-Free instances sleep after inactivity and take ~30s to wake — open the link a
-minute before a demo. To use a real model instead of the offline composer, add
-`ANTHROPIC_API_KEY` in the Render dashboard and set `LLM_PROVIDER=anthropic`.
+Check it with `/health`. `llm_provider` tells you which mode you are in.
 
-## Option B — Docker anywhere (Railway, Fly.io, a VM, your laptop)
+**The free plan sleeps after ~15 minutes idle**, and a cold start takes 30–60
+seconds. If you are demoing to someone, open the link a minute beforehand.
+
+**The free plan's filesystem is ephemeral** — the SQLite file is wiped on every
+restart and redeploy. `SEED_DEMO_CASES=1` re-runs the eleven labelled
+submissions on a cold start, so a visitor never lands on an empty dashboard.
+For history that survives, attach a Render disk mounted at `/app/data`.
+
+---
+
+## Anywhere else that runs a container
 
 ```bash
 docker build -t vendor-onboarding .
-docker run -p 8000:8000 vendor-onboarding
-# open http://localhost:8000
+docker run -p 8000:8000 -e GEMINI_API_KEY=your-key vendor-onboarding
 ```
 
-The image builds the frontend, installs the backend + `tesseract-ocr`, and
-renders the sample documents, so the demo cases work the moment it starts.
-Railway and Fly both deploy a `Dockerfile` directly and inject `$PORT`, which
-the container honours.
+Then open <http://localhost:8000>. The same image runs on Fly.io, Railway,
+Cloud Run, or any VPS. `$PORT` is honoured where the platform injects it.
 
-## Option C — Local + a tunnel (fastest, for a scheduled call)
+---
+
+## The LLM is optional, and this matters
+
+**Every verification decision is deterministic.** All nine checks — format
+rules, checksums, cross-field consistency, registry lookups, denied-party
+screening, duplicate detection — and the verdict that follows from them run
+with no API key and no network. The labelled-case evaluation scores 11/11
+either way.
+
+A key adds three things, all of them prose:
+
+- vendor emails written rather than templated,
+- reviewer summaries written rather than templated,
+- copilot answers to open-ended questions. The common questions ("what is
+  missing", "which checks failed", "why was this flagged") are answered
+  straight from the case record and need no key at all.
+
+Set `GEMINI_API_KEY` and the provider is inferred — you do **not** also need
+`LLM_PROVIDER`. Get a free key at <https://aistudio.google.com/apikey>.
+
+To force fixture mode for a demo even with a key present, set
+`LLM_PROVIDER=offline` explicitly.
+
+Diagnose configuration with:
 
 ```bash
-make install && make seed
-make api          # terminal 1 → :8001
-make ui           # terminal 2 → :5174
+python scripts/check_env.py
 ```
 
-Then expose it with a tunnel if you need an external URL:
-`npx cloudflared tunnel --url http://localhost:5174` (or `ngrok http 5174`).
-Good for a live call; not "always on" like Option A.
+It prints which `.env` files were found, what the app resolved, and makes a
+real call to Google. It never prints your key.
 
 ---
 
-## How it works on NEW tests (the important part)
+## Configuration
 
-The interviewer will submit inputs you've never seen. Here's exactly how the
-system handles them, honestly:
+| Variable | Default | What it does |
+|---|---|---|
+| `GEMINI_API_KEY` | — | Enables AI prose. Provider is inferred from it. |
+| `LLM_PROVIDER` | inferred | `offline` forces fixtures. Also `anthropic`, `openai`. |
+| `APP_API_KEY` (build arg) | `dev_secret` | Sets the API key in *both* the browser bundle and the server. |
+| `SEED_DEMO_CASES` | `0` | Run the labelled submissions into an empty database on boot. |
+| `CHECK_DELAY_MS` | `400` | Pacing so the live run view is watchable. `0` for throughput. |
+| `VO_DB_PATH` | `data/cases.db` | SQLite location. |
+| `DATABASE_URL` | — | Point at Postgres instead, if you outgrow one file. |
 
-### It genuinely generalises — the checks are algorithms, not lookups
-Use the **"Paste JSON"** tab on the Intake screen to run any submission live.
-Five of the seven checks work on *arbitrary* input because they compute, they
-don't match against a fixture:
+### About that API key
 
-- **Completeness** — reads the country's required-field/document list from the
-  rule pack and checks presence. Works for any supported country.
-- **Format** — real **IBAN mod-97** and **ABA 3-7-1** checksums and per-country
-  regex. A brand-new valid IBAN passes; a typo'd one fails. Nothing memorised.
-- **Consistency** — cross-field logic (bank-holder vs legal name, country vs
-  IBAN/tax-ID/address, the subtle "…Holdings" detector). Pure computation.
-- **Screening** — fuzzy name match + DOB/nationality second factor against the
-  denied-party list. Any name is screened.
-- **Duplicates** — fingerprints the submitted bank account and compares to the
-  vendor master.
+`APP_API_KEY` guards the write and reporting endpoints. Pass it as a Docker
+**build argument**, not just an environment variable:
 
-So a new, well-formed vendor flows through all of these correctly on the first
-try. This is the part that proves the process is real.
+```bash
+docker build --build-arg APP_API_KEY=something-long -t vendor-onboarding .
+```
 
-### Two checks are only as complete as their reference data — by design
-- **Registry** and parts of **screening/duplicates** compare against seeded
-  lists (`backend/seed/company_registry.json`, `denied_parties.json`,
-  `vendor_master.json`). A brand-new legitimate company won't be in the
-  registry, so it lands on **PENDING_REVIEW (`REGISTRY_NOT_FOUND`)** — which is
-  the *correct* answer: "we can't confirm this company exists." It does not
-  crash and it does not wrongly approve.
-- If you want a new company to reach **APPROVED** in a demo, add one line to
-  `company_registry.json` (its country + registration number + name) — that's
-  the analogue of "the company really is on Companies House." In production
-  these files are swapped for live registry / screening API adapters; the check
-  logic is unchanged.
+The browser bundle needs it at build time (Vite inlines it) while the server
+reads it at run time. The Dockerfile derives both from that one argument
+precisely so they cannot drift — set them separately and the UI returns 401
+against its own backend, which is a thoroughly unpleasant thing to debug on a
+fresh deploy.
 
-### Nothing an interviewer submits will break it
-Every check that can't complete degrades to a `NEEDS_REVIEW` finding rather
-than an exception, malformed JSON returns a clean `422`, an unsupported country
-escalates instead of approving, and unreadable documents ask for a resend. The
-system's worst case on a strange input is "ask a human," never a crash or a
-wrong approval.
-
-### Prep checklist for a live "new test"
-- Deploy via Option A so the link is warm.
-- Have the **Paste JSON** tab ready; keep one sample JSON open to edit from.
-- If they want to see a *new* company approve, pre-add it to the registry seed
-  (or redeploy with it added).
-- `POST /v1/reset` (or the "Clear case history" button) resets the queue between
-  runs. Reference data is untouched by a reset.
+**Be clear-eyed about what this is.** The key ships inside the JavaScript, so
+anyone can read it out of devtools. It deters casual scripted abuse of a public
+URL; it is not authentication. Anything handling real vendor data needs SSO in
+front of the ops routes. The vendor portal is separate and genuinely
+credentialed — each case has its own unguessable token.
 
 ---
 
-## What's in the image vs. what resets
+## Before you share the link
 
-- **Baked into the image:** rule packs, registry / denied-party / vendor-master
-  seeds, the 11 rendered sample documents. These are always present.
-- **Ephemeral:** the SQLite case history (`data/cases.db`). It resets on
-  redeploy or `make reset`. That's fine — cases are demo runs, not the system
-  of record for reference data.
+- [ ] Open `/health` — confirm `llm_provider` is what you expect.
+- [ ] Submit one vendor end to end and watch the checks stream.
+- [ ] Open the ops queue; confirm the seeded cases are there.
+- [ ] Ask the copilot "why was this flagged?" on any case.
+- [ ] Open the link once shortly before any live demo, to beat the cold start.
