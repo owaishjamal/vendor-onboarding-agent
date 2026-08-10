@@ -19,3 +19,9 @@ data/documents/uploads/
 # TypeScript / Vite build artefacts
 *.tsbuildinfo
 vite.config.ts.timestamp-*.mjs
+
+# Agent tooling. .claude/ IS committed — the instructions, commands, sub-agents
+# and hooks are shared, and a guard that only exists on one machine guards
+# nothing. Personal overrides go in settings.local.json.
+.claude/settings.local.json
+.mcp.local.json
