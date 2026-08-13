@@ -25,8 +25,12 @@ export default function Landing() {
 
   return (
     <motion.div className="-mx-4 sm:-mx-6 -my-8">
-      {me && <SessionBanner me={me} />}
-      <Hero />
+      {/* No "Continue as …" bar. It restated the email the header already
+          shows and added a second row of account actions directly beneath the
+          first, so a signed-in visitor met two stacked identity bars saying
+          the same thing before reaching any content. The header's account
+          menu carries all of it — including the way into your workspace. */}
+      <Hero me={me} />
       <DualLoginSection />
       <SolutionSection />
       <HowItWorksSection />
@@ -36,57 +40,11 @@ export default function Landing() {
   );
 }
 
-function SessionBanner({ me }: { me: Me }) {
-  const qc = useQueryClient();
-  const logout = useMutation({
-    mutationFn: api.logout,
-    onSuccess: async () => {
-      qc.setQueryData(["me"], null);
-      await qc.invalidateQueries();
-    },
-  });
-
-  return (
-    <motion.div
-      className="sticky top-16 z-20 border-b border-warm-cream-border bg-white"
-      initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35 }}
-    >
-      {/* The app header already shows who is signed in and offers Sign out.
-          Repeating both here gave the page two stacked identity bars saying
-          the same thing. This row keeps only what the header does NOT offer:
-          a way straight into your workspace. */}
-      <motion.div className="mx-auto max-w-7xl px-6 py-3 flex flex-wrap items-center gap-3">
-        <span className="text-[15px] font-medium tracking-[-0.02em] text-dark-charcoal">
-          Continue as <strong className="text-black">{me.email}</strong>
-        </span>
-        <span className="hidden sm:block flex-1" />
-        {me.role === "vendor" ? (
-          <Link to="/m/onboard" className="btn-hero !py-2 !px-4 !text-sm">
-            Vendor portal &rarr;
-          </Link>
-        ) : (
-          <Link to="/queue" className="btn-hero !py-2 !px-4 !text-sm">
-            Ops dashboard &rarr;
-          </Link>
-        )}
-        <a
-          href="#login"
-          className="rounded-[9999px] border border-warm-cream-border px-4 py-2 text-[15px] font-medium tracking-[-0.02em] text-near-black transition hover:bg-warm-off-white"
-        >
-          Switch account
-        </a>
-      </motion.div>
-    </motion.div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Hero
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Hero() {
+function Hero({ me }: { me: Me | null }) {
   const ref = useRef<HTMLDivElement | null>(null);
   // Subtle parallax: move the mesh based on pointer.
   const [tilt, setTilt] = useState({ x: 0, y: 0 });
@@ -142,11 +100,25 @@ function Hero() {
                 What used to take 5 days now takes ~15 seconds.
               </span>
             </p>
+            {/* Signed in, the primary action is "get to your work", not
+                "sign in again". This is where the removed banner's one useful
+                control now lives — in the page's main call to action rather
+                than in a strip above it. */}
             <div className="reveal-on-mount reveal-delay-3 flex flex-wrap items-center gap-3">
-              <a href="#login" className="btn-hero">
-                Try the live demo
-                <span aria-hidden>→</span>
-              </a>
+              {me ? (
+                <Link
+                  to={me.role === "ops" ? "/queue" : "/m/onboard"}
+                  className="btn-hero"
+                >
+                  {me.role === "ops" ? "Ops dashboard" : "Vendor portal"}
+                  <span aria-hidden>→</span>
+                </Link>
+              ) : (
+                <a href="#login" className="btn-hero">
+                  Try the live demo
+                  <span aria-hidden>→</span>
+                </a>
+              )}
               <a href="#how" className="btn-ghost-light">
                 How it works
               </a>

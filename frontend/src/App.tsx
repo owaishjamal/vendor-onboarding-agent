@@ -16,10 +16,9 @@ import VendorShell from "./views/vendor/VendorShell";
 import Landing from "./views/Landing";
 import { MotionPage } from "./components/motion";
 import {
+  AccountMenu,
   EnvChip,
-  HomeButton,
   NavLink,
-  UserChip,
   Wordmark,
 } from "./components/layout/Header";
 import { AuthPage, HomeRedirect, OpsGate } from "./components/layout/Nav";
@@ -83,20 +82,23 @@ export default function App() {
               )}
             </nav>
           )}
+          {/* Two controls, not four. The wordmark on the left is already the
+              link home — the convention every site follows — so a separate
+              Home pill was a third way to do the same thing, sitting between
+              the user and the controls that matter. */}
           <motion.div
-            className="ml-auto flex items-center gap-2"
+            className="ml-auto flex items-center gap-3"
             initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.15, duration: 0.4 }}
           >
-            <HomeButton onDark={isHome} />
             <EnvChip
               health={health.data}
               loading={health.isLoading}
               error={!!health.error}
               onDark={isHome}
             />
-            <UserChip me={me} onDark={isHome} />
+            <AccountMenu me={me} onDark={isHome} />
           </motion.div>
         </div>
       </header>
