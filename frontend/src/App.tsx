@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   Navigate,
   Route,
@@ -24,9 +25,53 @@ import {
 import { AuthPage, HomeRedirect, OpsGate } from "./components/layout/Nav";
 import { api, Me } from "./api";
 
+/**
+ * Make `#hash` links actually scroll.
+ *
+ * A browser scrolls to a fragment on a full page load. React Router does not:
+ * <Link to="/home#login"> pushes the history entry and re-renders, and nothing
+ * moves. The URL changes, the page does not, and the button reads as broken —
+ * which is exactly what Sign in did from the header.
+ *
+ * Two cases, and the retry is what covers the second:
+ *   already on the page — the target exists, scroll immediately
+ *   arriving from elsewhere — the route has not painted yet, so the element
+ *   is not in the DOM on the first frame. Poll briefly rather than scrolling
+ *   into a void.
+ */
+function useHashScroll() {
+  const { pathname, hash } = useLocation();
+
+  useEffect(() => {
+    if (!hash) {
+      return;
+    }
+    const id = decodeURIComponent(hash.slice(1));
+    let frame = 0;
+    let tries = 0;
+
+    const attempt = () => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      // ~1s of frames. Enough for a route transition, short enough that a
+      // genuinely missing id fails quietly instead of spinning.
+      if (tries++ < 60) frame = requestAnimationFrame(attempt);
+    };
+
+    frame = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(frame);
+    // pathname is a dependency so that /a#x -> /b#x re-runs; without it the
+    // identical hash on a new route would be treated as no change.
+  }, [pathname, hash]);
+}
+
 export default function App() {
   const loc = useLocation();
   const isHome = loc.pathname === "/home";
+  useHashScroll();
 
   const health = useQuery({
     queryKey: ["health"],

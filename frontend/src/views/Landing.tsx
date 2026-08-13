@@ -244,7 +244,10 @@ function OrbCard({
 
 function DualLoginSection() {
   return (
-    <section id="login" className="section-soft border-y border-surface-200">
+    // scroll-mt clears the sticky 64px header. Without it the browser aligns
+    // the section's top edge with the viewport's, and the header sits over the
+    // heading you were sent here to read.
+    <section id="login" className="section-soft border-y border-surface-200 scroll-mt-20">
       <div className="mx-auto max-w-7xl px-6 py-20 lg:py-24">
         <div className="text-center mb-12">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-black">
@@ -584,7 +587,7 @@ function HowItWorksSection() {
     },
   ];
   return (
-    <section id="how" className="section-soft">
+    <section id="how" className="section-soft scroll-mt-20">
       <div className="mx-auto max-w-7xl px-6 py-20 lg:py-28">
         <div className="text-center mb-14">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-black">
