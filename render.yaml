@@ -2,10 +2,15 @@
 #
 #   1. Push this repo to GitHub.
 #   2. Render -> New -> Blueprint -> pick the repo.
-#   3. Add GEMINI_API_KEY in the dashboard (Environment tab) if you want the
-#      AI-written vendor emails, reviewer summaries and open-ended copilot
+#   3. Add whichever provider keys you have in the dashboard (Environment tab)
+#      for AI-written vendor emails, reviewer summaries and open-ended copilot
 #      answers. Everything else — all nine checks and the verdict — is
 #      deterministic and runs without any key.
+#
+#      The LLM router uses whatever is present and skips the rest by name, so
+#      one key works and three give you failover. With a single key a free-tier
+#      429 takes the feature down; with two on different providers it does not,
+#      because a rate limit on one says nothing about the other.
 #
 # One service, one URL: the image builds the React app and FastAPI serves it
 # alongside the API, so there is no separate frontend to deploy or CORS to
@@ -30,7 +35,17 @@ services:
         value: "250"
       - key: SEED_DEMO_CASES
         value: "1"
-      # Paste your Google AI Studio key here in the dashboard, or leave it
-      # unset to run entirely on the deterministic path.
+      # Provider keys. `sync: false` means Render prompts for the value and
+      # stores it encrypted — it is never written into this file, which is
+      # committed. Leave them all unset to run entirely on the deterministic
+      # path; set one or more to enable the AI-written text.
+      #
+      #   Groq      https://console.groq.com/keys      fastest
+      #   Cerebras  https://cloud.cerebras.ai          same weights, separate quota
+      #   Gemini    https://aistudio.google.com/apikey vision + long context
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false

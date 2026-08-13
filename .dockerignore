@@ -8,3 +8,15 @@ data/cases.db-*
 .git
 *.md
 !README.md
+
+# Secrets must never enter the image. The Dockerfile does `COPY . .`, so
+# without these lines a developer's backend/.env — with live provider keys —
+# is baked into every layer and travels with the image to anyone who pulls it.
+# Keys reach a container through the platform's environment settings
+# (render.yaml `sync: false`, `docker run -e`), never through the build.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+**/!.env.example

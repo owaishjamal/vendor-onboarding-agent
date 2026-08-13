@@ -763,3 +763,72 @@ def test_the_health_report_exposes_state_without_exposing_secrets():
         for key in ("test-groq", "test-cerebras", "test-gemini"):
             assert key not in blob
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# 13. Deployment safety
+#
+# Two real incidents, both found by tracing where a key actually travels
+# rather than by reading the code that consumes it.
+# ---------------------------------------------------------------------------
+
+import pathlib                                                     # noqa: E402
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+
+
+def test_env_files_cannot_enter_the_docker_image():
+    """The Dockerfile does `COPY . .`.
+
+    Without an ignore rule that copies a developer's backend/.env — live
+    provider keys — into every layer of the image, where it travels to anyone
+    who pulls it. Keys reach a container through the platform's environment
+    settings, never through the build context.
+    """
+    ignore = (REPO / ".dockerignore").read_text()
+    assert "COPY . ." in (REPO / "Dockerfile").read_text(), \
+        "Dockerfile no longer bulk-copies; re-check whether this rule is still needed"
+    patterns = {l.strip() for l in ignore.splitlines() if l.strip()}
+    assert ".env" in patterns, ".dockerignore must exclude .env"
+    assert "**/.env" in patterns, ".dockerignore must exclude nested .env files"
+
+
+def test_render_declares_every_provider_key_and_stores_none_of_them():
+    """render.yaml is committed. `sync: false` makes Render prompt for the
+    value and hold it encrypted; a literal here would be a key in git."""
+    text = (REPO / "render.yaml").read_text()
+    for var in ("GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY"):
+        assert var in text, f"{var} is not declared for deployment"
+        after = text.split(var, 1)[1][:80]
+        assert "sync: false" in after, f"{var} must be sync: false, not a value"
+
+
+def test_the_committed_env_example_holds_no_values():
+    """A live Gemini key was committed here once and reached the history."""
+    for line in (REPO / ".env.example").read_text().splitlines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if "KEY" in key.upper() or "SECRET" in key.upper():
+            assert value.strip().strip('"').strip("'") == "", \
+                f"{key} has a value in a committed file"
+
+
+def test_provider_key_variable_names_match_what_the_registry_looks_up():
+    """The registry skips a provider whose env var is absent, by design and
+    silently. A key saved under the wrong name (`grok=` rather than
+    `GROQ_API_KEY=`) therefore disables that provider with no error at all —
+    which is exactly how this deployment ran on one provider, with no
+    failover, while appearing configured."""
+    import yaml
+    registry = yaml.safe_load(
+        (REPO / "backend/app/llm/router/models.yaml").read_text())
+    declared = {p["api_key_env"] for p in registry["providers"].values()}
+    documented = {l.split("=")[0].strip()
+                  for l in (REPO / ".env.example").read_text().splitlines()
+                  if "_API_KEY=" in l and not l.strip().startswith("#")}
+    missing = declared - documented
+    assert not missing, (
+        f"{missing} are read by the router but never mentioned in "
+        f".env.example, so nobody knows to set them")
