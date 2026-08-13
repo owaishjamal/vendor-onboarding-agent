@@ -1,169 +1,190 @@
 # Demo runbook
 
-For the 5-minute video and the live interview. Rehearse this exact order.
+The 5-minute video, and the live interview after it. Rehearse this exact order.
 
 ---
 
-## Before you start
+## Before you record
 
 ```bash
-make reset
+# 1. Fresh queue, paced so the live view is readable
+CHECK_DELAY_MS=400 SEED_DEMO_CASES=1 uvicorn backend.app.api.app:app --port 8000
 ```
 
-Header should show **API online**, `llm: offline`, and the country list.
-Keep the **Rules** tab open in a second browser tab — you will switch to it.
+Open **two browser tabs**:
 
-`CHECK_DELAY_MS=400` (the default) paces the live view. Set to 0 to show real speed.
+| Tab | URL | Used at |
+|---|---|---|
+| 1 | `/home` → sign in as ops | throughout |
+| 2 | `/queue` | 3:40 |
 
----
+Check before you hit record:
 
-## The 5-minute video
+- Header shows `● live` — if it says `mock`, no key is loaded and the AI text falls back to templates. **The verdict is identical either way**, so this is not fatal. Say so if it comes up.
+- Close every other tab. Notifications off.
+- Zoom to ~110%. The check names must be readable in a compressed recording.
 
-**0:00 — Frame the problem (20s)**
-
-> "Before you can pay a supplier, someone verifies they're real. Company details,
-> banking, tax registration, documents. Today that's manual, the chasing is manual,
-> and the audit trail is somebody's inbox. This does it and shows its working."
-
-**0:20 — Happy path, VS-01 Northwind (35s)**
-
-Click it. Let all six checks run.
-
-> "Six checks, all clean, approved automatically. Note it ran *all six* — nothing
-> stopped early. That matters in a second."
-
-**0:55 — VS-02 Brightline, the round-trip problem (60s)** ← *the design argument*
-
-> "Missing VAT number. Missing VAT certificate. Missing bank letter. Three separate
-> problems found by two different checks."
-
-Scroll to the drafted email.
-
-> "One email, all three items. That's the whole reason nothing stops early."
-
-> "If this pipeline short-circuited like an invoice pipeline does, we'd tell them
-> about the VAT number, they'd fix it, resubmit, and we'd tell them about the bank
-> letter. Three round trips instead of one. The entire cost of onboarding is round
-> trips — so every check runs on every submission, always."
-
-**1:55 — VS-03 Kessler, the fraud signal (70s)** ← *strongest single moment*
-
-> "Now look at this one. German company. IBAN passes its checksum. VAT ID is
-> correctly formatted. Registration number is valid. Every single field is fine."
-
-Expand **Cross-field consistency**.
-
-> "The account holder is 'K. Weber Privatkonto'. The company is Kessler
-> Industrietechnik GmbH. 37% similar. Nothing wrong with either field — the problem
-> only exists when you put them next to each other."
-
-> "That's payment redirection. And notice — no email was drafted."
-
-Point at the black suppression banner.
-
-> "This is a rule I enforce in one place. Vendor emails are generated only for
-> PENDING_INFO. Never for review, never for rejection. If someone's under
-> investigation for whose bank account that is, emailing them tips them off and
-> taints the review."
-
-**3:05 — VS-05 Continental, invisible from the submission (50s)**
-
-> "This submission is spotless. Every field valid, every document matches, name
-> matches the account."
-
-Expand **Duplicate & shared-banking check**.
-
-> "The bank account already belongs to Atlas Haulage Group — a different vendor
-> already on our master file. You cannot see that from the submission. It only
-> exists relative to what we already hold."
-
-> "And it's review, not reject. Group treasury, a parent collecting for a
-> subsidiary, factoring — all produce legitimately shared accounts. Auto-rejecting
-> breaks real suppliers. Auto-approving is how money leaves. So: never either."
-
-**3:55 — VS-06 Volkov, terminal (35s)**
-
-> "Director matches OFAC at 100%. Rejected outright — one of the few places an
-> automated system should say no rather than ask."
-
-> "This submission is *also* missing a bank letter. Ordinary, vendor-fixable. Still
-> no email. A sanctions-rejected vendor gets no correspondence at all, for anything."
-
-**NEW capabilities to show if you have time (or save for the interview):**
-
-- **Real document reading (VS-03 / VS-07).** Open VS-03's document check — the "K. Weber" name was *read off the actual bank letter*, not handed to us. Run VS-07 and point out its bank letter is a scanned image that went through OCR at reduced confidence. The documents are real files on disk; the system opens and parses them.
-- **Innocent namesake (VS-08).** Director "Sergei Antonov" matches a UK sanctions entry at 100% on name. It still approves — because the supplied date of birth clears it as a different person. Say: "name-only screening would have blocked a legitimate supplier here."
-- **Resubmission (VS-02 → VS-09).** Run VS-02 (pending, missing items), then VS-09. It recognises the same company, supersedes the old case, and shows "2 of 2 resolved, nothing new." This is the wait-and-recheck loop, automated.
-- **Reviewer action.** On any pending-review case, click Approve with a note. Show that it moves to "Approved by reviewer" and the action is logged with who/when/note — the audit trail is in the case, not an inbox.
-- **The eval number.** `make eval`: 100% auto-approve precision, 100% fraud recall, 0 false positives. Lead the interview with this.
-
-**The vendor form (the main intake surface).** The **Vendor form** tab is a real onboarding form — company details, directors (with DOB/nationality), banking (fields adapt to the country), and **document uploads**. Fill it in (or "Start from an example" to prefill the text fields), attach a PDF or two, and submit. The uploaded documents are **read for real** — text layer or OCR — and cross-checked against the form, then every check streams live on the right. This is the "any data submitted can be verified / any new test case" path: type anything, upload anything, watch it get verified. (The **Sample vendors** tab still one-click-runs the 11 curated cases with their pre-rendered documents for the scripted demo.)
-
-**Round-3 capabilities — these are the ones that answer a senior interviewer:**
-
-- **Fabricated vendor (VS-11).** Everything is internally perfect — valid VAT, valid IBAN, matching documents, clean screening. It still doesn't auto-approve, because the registration number exists in no registry. Say: "internal consistency isn't legitimacy; this is the one check that looks outside the submission." This is the strongest single moment in the round-3 set.
-- **Subtle redirection (VS-10).** Contrast with VS-03. The account is "Harbourstone Interiors **Holdings** Ltd" — one added word, 90%+ similar, and a threshold alone waves it through. Caught, and routed to review not rejection (group treasury is legitimate). Say: "real fraud uses plausible names, not obviously wrong ones."
-- **Volume, not vibes.** `make eval-volume` — 250 generated cases including plausible fraud, 100% precision / 100% recall / 0% FP. Then the honest bit: "during development this found a subtle-fraud miss at 96%; I root-caused it to set-vs-multiset token diffing and fixed it." Admitting a caught-and-fixed miss is more convincing than a clean 100%.
-- **Calibration.** `make calibrate` — "why 88? Below it, borderline namesakes get rejected; at 88 nobody is rejected on name alone and every real hit is still caught. The threshold sits on a curve, not a hunch."
-- **Override report.** Approve a held case with a note, then show the Queue's amber overrides card — "the system now tells me which check reviewers overrule most, so I know what to recalibrate. The audit log became a feedback loop."
-
-**4:30 — Rules tab (30s)**
-
-Switch tabs. Show `gb.yaml` regex and the name-matching bands.
-
-> "Rules are YAML, not code, because the people who own them aren't engineers. A
-> compliance lead can read that VAT pattern and tell me it's wrong. Adding a country
-> is adding a file."
-
-> "And the decision is one line: status is the maximum severity across all findings.
-> No weighted score to argue about."
+**Do not rehearse with `CHECK_DELAY_MS=0`.** You want to *see* the stages land.
 
 ---
 
-## Live interview — same order, plus these
+## The script — 5:00
 
-**"How do you decide what's a fraud signal versus a typo?"**
-Who can fix it. A transposed IBAN digit is something the vendor can correct — it
-goes in the email. A bank account in someone else's name isn't something you ask
-the vendor about, because if it's fraud you've tipped them off and if it isn't
-you've accused a real supplier. That's why severity is about routing, not about
-how bad something feels. VS-07 and VS-03 are both banking problems and they go to
-opposite places.
+### 0:00 — The problem (25s)
 
-**"Why not score the risk and threshold it?"**
-Because I'd then be defending the weights. A max over severities has no free
-parameters — each check decides its own finding's severity where it has the
-context, and the status falls out. VS-04 is the case that shows it: same field
-produces a NEEDS_INFO and a NEEDS_REVIEW, and the higher one wins.
+> "Before a company pays a supplier, someone has to verify they're real —
+> company details, bank account, tax registration, documents. That review is
+> manual, chasing missing paperwork is manual, and the audit trail is somebody's
+> inbox. This does it in about fifteen seconds and shows its working.
+>
+> What I want to show you isn't that it approves good vendors. It's the cases
+> where the obvious rule gives the wrong answer."
 
-**"What stops a NEEDS_REVIEW finding leaking into a vendor email?"**
-Two gates, both in `build_vendor_items`. Status must be PENDING_INFO, and the
-finding's severity must be NEEDS_INFO. I filter on severity rather than on whether
-a vendor message exists, so a leak can't happen even if someone later attaches
-vendor text to a review finding by mistake. There's a parametrised test on it.
+### 0:25 — Happy path (60s)
 
-**"How does this scale to a new country?"**
-One YAML file. Tax ID and registration regex, payment scheme, required documents.
-No code change. The harder part isn't the format rules — it's whether you have a
-registry to verify against, which I haven't built.
+`/m/onboard` → **Clean goods supplier** from *Or load a prepared case*.
 
-**"What's the weakest part?"**
-Document text is supplied by the fixtures rather than extracted, so I'm testing
-cross-referencing, not OCR. And screening is a four-entry stub matching on name
-alone — real screening matches on date of birth and nationality, which is exactly
-why I made near-matches escalate rather than reject.
+> "A vendor picks what they supply. They only get asked what that category
+> actually needs — this is a JSON profile, not a branch in the code."
 
-**"What next?"**
-Registry verification — confirming a Companies House number actually exists and is
-active. Everything here validates *format* and *internal consistency*; nothing
-confirms the entity is real. That's the biggest gap.
+Hit **Submit for verification**. Let all nine checks land.
+
+> "Nine checks, running live. Seven are deterministic — regex, an IBAN
+> checksum, a registry lookup. Two use a model, and the report tells you which
+> is which, because 'the checksum failed' and 'the model thinks this looks like
+> a resume' deserve different levels of trust.
+>
+> Nothing short-circuits. Even once a rejection is certain, every check still
+> runs — so the vendor gets one message listing everything, not one item per
+> round trip."
+
+Verdict: **APPROVED**, confidence 100%.
+
+### 1:25 — Edge case 1: the flawless fraud (55s)
+
+Back → **Bank account already belongs to another vendor**.
+
+> "Watch this one — every field is valid."
+
+Submit. Point at the checks going green, then the verdict.
+
+> "Formats pass. Documents corroborate the form. The company is in the
+> registry. And it comes back **needs review** — because that bank account is
+> already on our master file under a different company. Nothing *inside* the
+> submission is wrong. It's only visible by comparing against what we already
+> hold. That's invoice-redirection fraud.
+>
+> And notice it is **not** rejected. Group treasury, a parent collecting for a
+> subsidiary, factoring — all produce this exact pattern legitimately.
+> Auto-rejecting breaks real suppliers; auto-approving is how money leaves. So
+> a human decides, with the conflicting record attached."
+
+### 2:20 — Edge case 2: the innocent namesake (50s)
+
+Back → **Director shares a name with a sanctioned individual**.
+
+> "This director's name matches an OFAC entry exactly. One hundred percent."
+
+Submit. Verdict: **APPROVED**.
+
+> "Approved — because his date of birth and nationality don't match the
+> listing. Names aren't unique, especially transliterated. Screening on names
+> alone means turning away legitimate suppliers, and that's a fairness problem
+> as much as a commercial one.
+>
+> The near-match is still written to the audit trail. 'We saw it and cleared
+> it, here's why' is a much better record than never having looked."
+
+If time is tight, skip the next line. If not:
+
+> "And the twin case — same name, matching DOB and nationality — is rejected
+> outright, no human. Sanctions are one of very few places an automated system
+> should refuse rather than escalate."
+
+### 3:10 — Edge case 3: valid today, worthless next month (30s)
+
+Back → **Insurance valid today, expires in three weeks**.
+
+Submit. Verdict: **APPROVED WITH CONDITIONS**.
+
+> "A binary valid/expired test gets this wrong both ways. Blocking a vendor
+> whose cover is valid today is how teams learn to route around procurement.
+> Waving it through is how a contractor ends up on site with lapsed liability
+> cover. So there's a fourth verdict: onboarded now, renewal recorded against
+> them and chased before the date."
+
+### 3:40 — Ops dashboard (45s)
+
+Switch to tab 2, `/queue`.
+
+> "Everything that's run, with status and the reason. Touch rate — how often a
+> human was needed."
+
+Open the shared-bank-account case.
+
+> "The full report. Every finding with its evidence. Deterministic and AI
+> checks rendered separately. The verification matrix — every claim on the
+> form, corroborated, contradicted or unevidenced."
+
+Copilot tab → type **why was this flagged?**
+
+> "And a copilot grounded in this case record. Most questions are answered
+> straight from the data rather than a model, because that can't hallucinate.
+> When it doesn't know, it says so instead of inventing a compliance opinion."
+
+### 4:25 — How it's built (35s)
+
+> "Two things I'd call out.
+>
+> Categories are data. Six of them, six JSON files — adding one ships no
+> Python. The interesting half is what a category *stops* asking for: a
+> freelancer has no certificate of incorporation, and demanding one parks them
+> in 'more information needed' forever, unresolvable by anyone.
+>
+> And LLM calls go through a router over Groq, Cerebras and Gemini. It picks a
+> provider per request from live rate-limit and health state, and fails over on
+> a 429. I tested it with three deliberately invalid keys — every model fails,
+> every breaker opens, and all seven cases still reach the right verdict on
+> templates. The compliance decision never depended on a model being up."
+
+**Stop at 5:00.**
 
 ---
 
-## If something goes wrong live
+## Cuts, if you run long
 
-- **"API unreachable"** — backend died. `make api` in the other terminal.
-- **A check hangs** — you're on a live provider. Set `LLM_PROVIDER=offline` in
-  `.env`, restart the API, carry on. Nothing else changes.
-- **A status looks wrong** — check you haven't edited a fixture. `make seed` regenerates.
-- **Queue is cluttered from rehearsal** — `make reset`.
+In this order:
+
+1. The sanctions twin (2:20 section, last paragraph)
+2. The copilot (3:40 section, last paragraph)
+3. Edge case 3 — but say the sentence "there's a fourth verdict for obligations
+   that are satisfied now and won't be later," because the four-verdict model is
+   the point
+
+**Never cut** the shared bank account. It is the strongest thing here.
+
+---
+
+## Live interview
+
+Same order, but expect interruptions. Have these ready:
+
+**"Show me it's not scripted."**
+Type a vendor by hand. Any name, any GSTIN. It runs the same nine checks.
+Or attach a random PDF to the photo-ID slot and watch preflight refuse it.
+
+**"What if the model is down?"**
+`LLM_PROVIDER=offline` and re-run anything. Same verdict, template prose.
+
+**"How do I add a category?"**
+Open `data/profiles/categories/professional.json`. Show `"requirement": "na"`
+on incorporation. No Python anywhere.
+
+**"How do you know the tests are real?"**
+Delete the disclosure gate in `build_vendor_items` and run
+`pytest tests/test_scenarios.py`. Two tests go red. Restore.
+
+**"What's not built?"**
+Live registry and sanctions APIs — both behind provider adapters with seeded
+data. No real auth on the ops routes. Single process, so no horizontal scale.
+Say these plainly; they're in the README.
